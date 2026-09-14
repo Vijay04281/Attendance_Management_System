@@ -12,7 +12,8 @@ import {
   FaChartBar,
 } from "react-icons/fa";
 
-const API_URL = "https://attendance-management-system-gpci.onrender.com/api";
+const API_URL =
+  "https://attendance-management-system-gpci.onrender.com/api";
 
 function StaffDashboard() {
   // =====================================================
@@ -22,9 +23,9 @@ function StaffDashboard() {
   const [subjects, setSubjects] = useState([]);
 
   // IMPORTANT:
-  // Selection is based on allocation_id, not subject_id.
-  // This allows the same subject to be allocated to
-  // different classes without mixing them.
+  // Always select using allocation_id.
+  // This prevents the same subject allocated to different
+  // classes from being mixed.
   const [selectedAllocationId, setSelectedAllocationId] =
     useState("");
 
@@ -51,6 +52,10 @@ function StaffDashboard() {
   const countTimerRef = useRef(null);
   const countdownTimerRef = useRef(null);
 
+  // Prevent old async requests from updating state
+  // after the session has changed.
+  const attendanceRequestRef = useRef(0);
+
   // =====================================================
   // AUTH
   // =====================================================
@@ -70,10 +75,15 @@ function StaffDashboard() {
   // =====================================================
 
   const getHeaders = useCallback(() => {
-    return {
+    const headers = {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
     };
+
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    return headers;
   }, [token]);
 
   // =====================================================
@@ -141,17 +151,17 @@ function StaffDashboard() {
             "Unnamed Subject",
 
           class_id:
-            allocation.class_id !== null &&
-            allocation.class_id !== undefined
+            allocation.class_id !== undefined &&
+            allocation.class_id !== null
               ? Number(allocation.class_id)
               : null,
 
           class_year:
-            allocation.class_year !== null &&
-            allocation.class_year !== undefined
+            allocation.class_year !== undefined &&
+            allocation.class_year !== null
               ? Number(allocation.class_year)
-              : allocation.year !== null &&
-                allocation.year !== undefined
+              : allocation.year !== undefined &&
+                allocation.year !== null
               ? Number(allocation.year)
               : null,
 
@@ -165,8 +175,8 @@ function StaffDashboard() {
             "",
 
           semester:
-            allocation.semester !== null &&
-            allocation.semester !== undefined
+            allocation.semester !== undefined &&
+            allocation.semester !== null
               ? Number(allocation.semester)
               : null,
         }));
@@ -178,17 +188,14 @@ function StaffDashboard() {
 
       setSubjects(staffSubjects);
 
-      // Select first allocation if current selection
-      // is no longer available.
+      // Keep current allocation if still available.
       if (staffSubjects.length > 0) {
         setSelectedAllocationId((current) => {
-          const currentExists =
-            staffSubjects.some(
-              (allocation) =>
-                Number(
-                  allocation.allocation_id
-                ) === Number(current)
-            );
+          const currentExists = staffSubjects.some(
+            (allocation) =>
+              Number(allocation.allocation_id) ===
+              Number(current)
+          );
 
           if (current && currentExists) {
             return current;
@@ -249,9 +256,7 @@ function StaffDashboard() {
           );
         }
 
-        setQrImage(
-          data.qr_image || ""
-        );
+        setQrImage(data.qr_image || "");
 
         setQrExpiresAt(
           data.qr_expires_at || null
@@ -274,7 +279,50 @@ function StaffDashboard() {
   );
 
   // =====================================================
+  // NORMALIZE ATTENDANCE ARRAY
+  // =====================================================
+
+  const extractAttendanceRecords = (data) => {
+    if (Array.isArray(data)) {
+      return data;
+    }
+
+    if (
+      data &&
+      Array.isArray(data.attendance)
+    ) {
+      return data.attendance;
+    }
+
+    if (
+      data &&
+      Array.isArray(data.records)
+    ) {
+      return data.records;
+    }
+
+    if (
+      data &&
+      Array.isArray(data.attendance_records)
+    ) {
+      return data.attendance_records;
+    }
+
+    return [];
+  };
+
+  // =====================================================
   // LOAD ATTENDANCE COUNT
+  //
+  // PRIMARY:
+  // GET /attendance/session/:id/count
+  //
+  // FALLBACK:
+  // GET /attendance/session/:id
+  //
+  // The fallback is important because the current
+  // attendanceRoutes.js contains /session/:sessionId
+  // but does NOT contain /session/:sessionId/count.
   // =====================================================
 
   const loadAttendanceCount = useCallback(
@@ -283,8 +331,15 @@ function StaffDashboard() {
         return;
       }
 
+      const requestId =
+        ++attendanceRequestRef.current;
+
       try {
-        const response = await fetch(
+        // =================================================
+        // FIRST TRY THE COUNT ENDPOINT
+        // =================================================
+
+        const countResponse = await fetch(
           `${API_URL}/attendance/session/${id}/count`,
           {
             method: "GET",
@@ -292,30 +347,197 @@ function StaffDashboard() {
           }
         );
 
-        const data = await response.json();
+        let countData = null;
 
-        if (!response.ok) {
+        try {
+          countData =
+            await countResponse.json();
+        } catch {
+          countData = null;
+        }
+
+        if (countResponse.ok) {
+          if (
+            requestId !==
+            attendanceRequestRef.current
+          ) {
+            return;
+          }
+
+          const newPresent = Number(
+            countData?.present ?? 0
+          );
+
+          const newTotal = Number(
+            countData?.total ??
+              countData?.total_students ??
+              0
+          );
+
+          const newPercentage =
+            Number(
+              countData?.percentage ??
+                (newTotal > 0
+                  ? (
+                      (newPresent /
+                        newTotal) *
+                      100
+                    ).toFixed(2)
+                  : 0)
+            );
+
+          setPresent(newPresent);
+          setTotal(newTotal);
+          setPercentage(
+            Math.min(
+              Math.max(newPercentage, 0),
+              100
+            )
+          );
+
+          if (
+            countData?.session_status
+          ) {
+            setSessionStatus(
+              countData.session_status
+            );
+          }
+
+          return;
+        }
+
+        // =================================================
+        // COUNT ENDPOINT DOES NOT EXIST
+        //
+        // FALLBACK TO ACTUAL ATTENDANCE RECORDS
+        // =================================================
+
+        console.warn(
+          "Attendance count endpoint unavailable. Falling back to session attendance records.",
+          countData
+        );
+
+        const recordsResponse =
+          await fetch(
+            `${API_URL}/attendance/session/${id}`,
+            {
+              method: "GET",
+              headers: getHeaders(),
+            }
+          );
+
+        const recordsData =
+          await recordsResponse.json();
+
+        if (!recordsResponse.ok) {
           throw new Error(
-            data.message ||
-              "Failed to load attendance count"
+            recordsData?.message ||
+              "Failed to load attendance records"
           );
         }
 
-        setPresent(
-          Number(data.present || 0)
+        if (
+          requestId !==
+          attendanceRequestRef.current
+        ) {
+          return;
+        }
+
+        console.log(
+          "Session attendance records:",
+          recordsData
         );
 
-        setTotal(
-          Number(data.total || 0)
+        const records =
+          extractAttendanceRecords(
+            recordsData
+          );
+
+        // =================================================
+        // CALCULATE PRESENT
+        //
+        // PRESENT and LATE both mean the student attended.
+        // =================================================
+
+        const attendedRecords =
+          records.filter((record) => {
+            const status = String(
+              record.status ||
+                record.attendance_status ||
+                ""
+            )
+              .trim()
+              .toUpperCase();
+
+            return (
+              status === "PRESENT" ||
+              status === "LATE"
+            );
+          });
+
+        const newPresent =
+          attendedRecords.length;
+
+        // =================================================
+        // TOTAL STUDENTS
+        //
+        // Prefer backend-provided total.
+        // Otherwise use a students array if supplied.
+        // If neither exists, keep the current total.
+        // =================================================
+
+        let newTotal = Number(
+          recordsData?.total_students ??
+            recordsData?.total ??
+            recordsData?.student_count ??
+            0
         );
+
+        if (
+          !newTotal &&
+          Array.isArray(
+            recordsData?.students
+          )
+        ) {
+          newTotal =
+            recordsData.students.length;
+        }
+
+        if (!newTotal) {
+          newTotal = total;
+        }
+
+        const newPercentage =
+          newTotal > 0
+            ? Number(
+                (
+                  (newPresent /
+                    newTotal) *
+                  100
+                ).toFixed(2)
+              )
+            : 0;
+
+        setPresent(newPresent);
+        setTotal(newTotal);
 
         setPercentage(
-          Number(data.percentage || 0)
+          Math.min(
+            Math.max(newPercentage, 0),
+            100
+          )
         );
 
-        if (data.session_status) {
+        // Some controller responses include session info.
+        const returnedSession =
+          recordsData?.session ||
+          recordsData?.attendanceSession;
+
+        if (
+          returnedSession?.status
+        ) {
           setSessionStatus(
-            data.session_status
+            returnedSession.status
           );
         }
       } catch (err) {
@@ -325,134 +547,143 @@ function StaffDashboard() {
         );
       }
     },
-    [getHeaders]
+    [getHeaders, total]
   );
 
   // =====================================================
   // LOAD ACTIVE SESSION
   // =====================================================
 
-  const loadActiveSession = useCallback(async () => {
-    try {
-      const response = await fetch(
-        `${API_URL}/attendance-sessions/active`,
-        {
-          method: "GET",
-          headers: getHeaders(),
+  const loadActiveSession =
+    useCallback(async () => {
+      try {
+        const response = await fetch(
+          `${API_URL}/attendance-sessions/active`,
+          {
+            method: "GET",
+            headers: getHeaders(),
+          }
+        );
+
+        const data =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.message ||
+              "Failed to load active session"
+          );
         }
-      );
 
-      const data = await response.json();
+        const sessions =
+          Array.isArray(data.sessions)
+            ? data.sessions
+            : [];
 
-      if (!response.ok) {
-        throw new Error(
-          data.message ||
+        if (sessions.length > 0) {
+          const session = sessions[0];
+
+          console.log(
+            "Active attendance session:",
+            session
+          );
+
+          setSessionId(
+            session.session_id
+          );
+
+          setSessionStatus(
+            session.status || "ACTIVE"
+          );
+
+          // =================================================
+          // MATCH BY ALLOCATION ID
+          // =================================================
+
+          if (
+            session.allocation_id !==
+              undefined &&
+            session.allocation_id !==
+              null
+          ) {
+            const allocation =
+              subjects.find(
+                (item) =>
+                  Number(
+                    item.allocation_id
+                  ) ===
+                  Number(
+                    session.allocation_id
+                  )
+              );
+
+            if (allocation) {
+              setSelectedAllocationId(
+                String(
+                  allocation.allocation_id
+                )
+              );
+            }
+          } else if (
+            session.subject_id
+          ) {
+            // Backward compatibility.
+            const allocation =
+              subjects.find(
+                (item) =>
+                  Number(
+                    item.subject_id
+                  ) ===
+                  Number(
+                    session.subject_id
+                  )
+              );
+
+            if (allocation) {
+              setSelectedAllocationId(
+                String(
+                  allocation.allocation_id
+                )
+              );
+            }
+          }
+
+          await loadQR(
+            session.session_id
+          );
+
+          await loadAttendanceCount(
+            session.session_id
+          );
+        } else {
+          setSessionId(null);
+          setSessionStatus("CLOSED");
+
+          setQrImage("");
+          setQrExpiresAt(null);
+
+          setPresent(0);
+          setTotal(0);
+          setPercentage(0);
+          setSecondsLeft(0);
+        }
+      } catch (err) {
+        console.error(
+          "Load active session error:",
+          err
+        );
+
+        setError(
+          err.message ||
             "Failed to load active session"
         );
       }
-
-      const sessions = Array.isArray(
-        data.sessions
-      )
-        ? data.sessions
-        : [];
-
-      if (sessions.length > 0) {
-        const session = sessions[0];
-
-        setSessionId(
-          session.session_id
-        );
-
-        setSessionStatus(
-          session.status || "ACTIVE"
-        );
-
-        // =================================================
-        // IMPORTANT:
-        // Prefer allocation_id from the session.
-        // This guarantees exact subject + class selection.
-        // =================================================
-
-        if (
-          session.allocation_id !== undefined &&
-          session.allocation_id !== null
-        ) {
-          const allocation =
-            subjects.find(
-              (item) =>
-                Number(
-                  item.allocation_id
-                ) ===
-                Number(
-                  session.allocation_id
-                )
-            );
-
-          if (allocation) {
-            setSelectedAllocationId(
-              String(
-                allocation.allocation_id
-              )
-            );
-          }
-        } else if (session.subject_id) {
-          // Backward compatibility for old sessions.
-          const allocation =
-            subjects.find(
-              (item) =>
-                Number(
-                  item.subject_id
-                ) ===
-                Number(
-                  session.subject_id
-                )
-            );
-
-          if (allocation) {
-            setSelectedAllocationId(
-              String(
-                allocation.allocation_id
-              )
-            );
-          }
-        }
-
-        await loadQR(
-          session.session_id
-        );
-
-        await loadAttendanceCount(
-          session.session_id
-        );
-      } else {
-        setSessionId(null);
-        setSessionStatus("CLOSED");
-
-        setQrImage("");
-        setQrExpiresAt(null);
-
-        setPresent(0);
-        setTotal(0);
-        setPercentage(0);
-      }
-    } catch (err) {
-      console.error(
-        "Load active session error:",
-        err
-      );
-
-      setError(
-        err.message ||
-          "Failed to load active session"
-      );
-    }
-  }, [
-    getHeaders,
-    loadQR,
-    loadAttendanceCount,
-    subjects,
-  ]);
+    }, [
+      getHeaders,
+      loadQR,
+      loadAttendanceCount,
+      subjects,
+    ]);
 
   // =====================================================
   // START ATTENDANCE SESSION
@@ -466,7 +697,6 @@ function StaffDashboard() {
       return;
     }
 
-    // Find exact allocation.
     const selectedAllocation =
       subjects.find(
         (allocation) =>
@@ -510,14 +740,11 @@ function StaffDashboard() {
           method: "POST",
           headers: getHeaders(),
           body: JSON.stringify({
-            // Exact allocation
             allocation_id:
               Number(
                 selectedAllocation.allocation_id
               ),
 
-            // Keep subject information for
-            // backward compatibility.
             subject_id:
               Number(
                 selectedAllocation.subject_id
@@ -548,7 +775,7 @@ function StaffDashboard() {
       );
 
       if (!response.ok) {
-        // Backend may return existing session.
+        // Backend may return an already-existing session.
         if (data.session_id) {
           setSessionId(
             data.session_id
@@ -749,7 +976,7 @@ function StaffDashboard() {
   ]);
 
   // =====================================================
-  // LIVE ATTENDANCE COUNT EVERY 2 SECONDS
+  // LIVE ATTENDANCE REFRESH EVERY 2 SECONDS
   // =====================================================
 
   useEffect(() => {
@@ -863,8 +1090,7 @@ function StaffDashboard() {
     );
 
   const isActive =
-    sessionStatus ===
-    "ACTIVE";
+    sessionStatus === "ACTIVE";
 
   // =====================================================
   // RENDER
@@ -1059,8 +1285,6 @@ function StaffDashboard() {
 
         <div className="min-w-0 xl:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
 
-          {/* Header */}
-
           <div className="p-5 sm:p-6 border-b border-slate-100">
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 shrink-0 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center">
@@ -1079,11 +1303,9 @@ function StaffDashboard() {
             </div>
           </div>
 
-          {/* Body */}
-
           <div className="p-5 sm:p-6">
 
-            {/* Subject + Class Allocation */}
+            {/* Subject + Class */}
 
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">
@@ -1157,7 +1379,6 @@ function StaffDashboard() {
 
             {selectedSubjectData && (
               <div className="mt-3 bg-slate-50 border border-slate-100 rounded-xl px-4 py-3">
-
                 <div className="flex items-center gap-3">
 
                   <div className="w-9 h-9 shrink-0 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
@@ -1180,8 +1401,6 @@ function StaffDashboard() {
 
                     <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
 
-                      {/* Class */}
-
                       <span className="text-xs text-slate-500">
                         Class:{" "}
                         <span className="font-semibold text-slate-700">
@@ -1192,8 +1411,6 @@ function StaffDashboard() {
                         </span>
                       </span>
 
-                      {/* Academic Year */}
-
                       <span className="text-xs text-slate-500">
                         Academic Year:{" "}
                         <span className="font-semibold text-slate-700">
@@ -1203,8 +1420,6 @@ function StaffDashboard() {
                           }
                         </span>
                       </span>
-
-                      {/* Semester */}
 
                       <span className="text-xs text-slate-500">
                         Semester:{" "}
@@ -1222,7 +1437,7 @@ function StaffDashboard() {
               </div>
             )}
 
-            {/* Start / Active */}
+            {/* Start */}
 
             {!isActive ? (
               <button
@@ -1271,14 +1486,10 @@ function StaffDashboard() {
               qrImage ? (
                 <div className="text-center">
 
-                  {/* QR Status */}
-
                   <div className="inline-flex items-center gap-2 bg-green-100 text-green-700 px-4 py-2 rounded-full text-sm font-semibold">
                     <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
                     QR Active
                   </div>
-
-                  {/* QR */}
 
                   <div className="mt-5 flex justify-center">
 
@@ -1292,8 +1503,6 @@ function StaffDashboard() {
 
                     </div>
                   </div>
-
-                  {/* QR Information */}
 
                   <div className="mt-5">
 
@@ -1420,8 +1629,6 @@ function StaffDashboard() {
 
             <div className="space-y-0">
 
-              {/* Subject */}
-
               <div className="flex items-center justify-between gap-5 py-3 border-b border-slate-100">
 
                 <span className="text-sm text-slate-500">
@@ -1435,8 +1642,6 @@ function StaffDashboard() {
                 </span>
 
               </div>
-
-              {/* Class */}
 
               <div className="flex items-center justify-between gap-5 py-3 border-b border-slate-100">
 
@@ -1457,8 +1662,6 @@ function StaffDashboard() {
 
               </div>
 
-              {/* Academic Year */}
-
               <div className="flex items-center justify-between gap-5 py-3 border-b border-slate-100">
 
                 <span className="text-sm text-slate-500">
@@ -1473,8 +1676,6 @@ function StaffDashboard() {
                 </span>
 
               </div>
-
-              {/* Semester */}
 
               <div className="flex items-center justify-between gap-5 py-3 border-b border-slate-100">
 
@@ -1491,8 +1692,6 @@ function StaffDashboard() {
 
               </div>
 
-              {/* Allocation */}
-
               <div className="flex items-center justify-between gap-5 py-3 border-b border-slate-100">
 
                 <span className="text-sm text-slate-500">
@@ -1508,8 +1707,6 @@ function StaffDashboard() {
 
               </div>
 
-              {/* Session */}
-
               <div className="flex items-center justify-between gap-5 py-3 border-b border-slate-100">
 
                 <span className="text-sm text-slate-500">
@@ -1521,8 +1718,6 @@ function StaffDashboard() {
                 </span>
 
               </div>
-
-              {/* Status */}
 
               <div className="flex items-center justify-between gap-5 py-3">
 
