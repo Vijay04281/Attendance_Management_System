@@ -13,7 +13,7 @@ import {
 } from "react-icons/fa";
 import { Html5Qrcode } from "html5-qrcode";
 
-const API_URL = "http://localhost:5000/api";
+const API_URL = "https://attendance-management-system-gpci.onrender.com/api";
 
 function StudentScanQR() {
     const scannerRef = useRef(null);

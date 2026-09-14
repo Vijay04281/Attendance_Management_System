@@ -49,7 +49,7 @@ const HodYear2Attendance = () => {
              * only this API URL needs to be changed.
              */
             const response = await fetch(
-                "http://localhost:5000/api/attendance",
+                "https://attendance-management-system-gpci.onrender.com/api/attendance",
                 {
                     headers: {
                         Authorization: `Bearer ${token}`,

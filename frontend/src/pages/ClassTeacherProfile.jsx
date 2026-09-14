@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 const API_BASE =
-  import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+  import.meta.env.VITE_API_URL || "https://attendance-management-system-gpci.onrender.com/api";
 
 const getToken = () => {
   return (

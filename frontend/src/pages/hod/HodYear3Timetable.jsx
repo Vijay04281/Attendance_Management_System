@@ -64,7 +64,7 @@ const HodYear3Timetable = () => {
         localStorage.getItem("token");
 
       const response = await fetch(
-        "http://localhost:5000/api/timetables",
+        "https://attendance-management-system-gpci.onrender.com/api/timetables",
         {
           headers: {
             Authorization: `Bearer ${token}`,

@@ -10,7 +10,7 @@ import {
 } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
 
-const API_BASE_URL = "http://localhost:5000/api";
+const API_BASE_URL = "https://attendance-management-system-gpci.onrender.com/api";
 
 const AdminDashboard = () => {
     const navigate = useNavigate();

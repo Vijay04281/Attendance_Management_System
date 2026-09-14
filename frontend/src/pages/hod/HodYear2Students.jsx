@@ -42,7 +42,7 @@ const HodYear2Students = () => {
             setError("");
 
             const response = await fetch(
-                "http://localhost:5000/api/students",
+                "https://attendance-management-system-gpci.onrender.com/api/students",
                 {
                     headers: {
                         Authorization: `Bearer ${token}`,

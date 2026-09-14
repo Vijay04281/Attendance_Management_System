@@ -57,7 +57,7 @@ const HodYear3Subjects = () => {
       const token = localStorage.getItem("token");
 
       const response = await fetch(
-        "http://localhost:5000/api/subjects",
+        "https://attendance-management-system-gpci.onrender.com/api/subjects",
         {
           headers: {
             Authorization: `Bearer ${token}`,

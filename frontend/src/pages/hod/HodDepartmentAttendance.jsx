@@ -112,7 +112,7 @@ const HodDepartmentAttendance = () => {
                 );
 
             const response = await fetch(
-                "http://localhost:5000/api/attendance",
+                "https://attendance-management-system-gpci.onrender.com/api/attendance",
                 {
                     method: "GET",
 

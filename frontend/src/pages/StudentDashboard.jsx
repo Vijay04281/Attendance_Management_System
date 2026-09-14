@@ -64,7 +64,7 @@ function StudentDashboard() {
             }
 
             const response = await fetch(
-                `http://localhost:5000/api/attendance/student/${userId}`,
+                `https://attendance-management-system-gpci.onrender.com/api/attendance/student/${userId}`,
                 {
                     method: "GET",
                     headers: {

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-const API_URL = "http://localhost:5000/api";
+const API_URL = "https://attendance-management-system-gpci.onrender.com/api";
 
 function StudentTimetable() {
   const [timetables, setTimetables] = useState([]);
