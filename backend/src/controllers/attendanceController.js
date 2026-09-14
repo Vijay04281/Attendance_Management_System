@@ -558,24 +558,12 @@ const validateStudentForSession = async (
 // =====================================================
 // HELPER: GET LOGGED-IN STUDENT
 // =====================================================
-//
-// IMPORTANT:
-//
-// Never trust student_id from browser for QR attendance.
-//
-// Student is identified from:
-//
-// JWT user_id
-//      ↓
-// students.user_id
-//
-// =====================================================
 
 const getLoggedInStudent = async (req) => {
     const user = req.user || {};
 
     // -------------------------------------------------
-    // 1. If middleware explicitly provides student_id
+    // 1. Middleware student_id
     // -------------------------------------------------
 
     if (
@@ -607,7 +595,7 @@ const getLoggedInStudent = async (req) => {
     }
 
     // -------------------------------------------------
-    // 2. Resolve using JWT user_id
+    // 2. JWT user_id
     // -------------------------------------------------
 
     const userId =
@@ -651,28 +639,6 @@ const getLoggedInStudent = async (req) => {
 
 // =====================================================
 // HELPER: EXTRACT QR TOKEN
-// =====================================================
-//
-// Staff QR contains JSON:
-//
-// {
-//     "session_id": 1,
-//     "qr_token": "...",
-//     "allocation_id": 2,
-//     "subject_id": 3,
-//     "staff_id": 4,
-//     "class_id": 5
-// }
-//
-// Student scanner may send either:
-//
-// 1. Raw token
-//
-// OR
-//
-// 2. Complete JSON QR data
-//
-// This helper supports both.
 // =====================================================
 
 const extractQRToken = (value) => {
@@ -728,8 +694,6 @@ const extractQRToken = (value) => {
             }
         }
     } catch (error) {
-        // If it is not valid JSON,
-        // treat it as a raw token.
         return raw;
     }
 
@@ -1395,7 +1359,7 @@ const getAttendanceBySession = async (
 
                     SUM(
                         CASE
-                            WHEN status =
+                            WHEN UPPER(status) =
                                  'PRESENT'
                             THEN 1
                             ELSE 0
@@ -1404,7 +1368,7 @@ const getAttendanceBySession = async (
 
                     SUM(
                         CASE
-                            WHEN status =
+                            WHEN UPPER(status) =
                                  'LATE'
                             THEN 1
                             ELSE 0
@@ -1453,9 +1417,7 @@ const getAttendanceBySession = async (
                             TRIM(st.department)
                           ) =
                           LOWER(
-                            TRIM(
-                                d.department_name
-                            )
+                            TRIM(d.department_name)
                           )
                     `,
                     [sessionClassId]
@@ -1495,6 +1457,19 @@ const getAttendanceBySession = async (
                     totalAttendance,
                 0
             );
+
+        const percentage =
+            classStudentCount > 0
+                ? Number(
+                      (
+                          (
+                              totalAttendance /
+                              classStudentCount
+                          ) *
+                          100
+                      ).toFixed(2)
+                  )
+                : 0;
 
         return res.status(200).json({
             success: true,
@@ -1564,7 +1539,10 @@ const getAttendanceBySession = async (
                     absentCount,
 
                 total_students:
-                    classStudentCount
+                    classStudentCount,
+
+                percentage:
+                    percentage
             }
         });
 
@@ -1579,6 +1557,312 @@ const getAttendanceBySession = async (
             message:
                 "Failed to fetch session attendance",
             error: error.message
+        });
+    }
+};
+
+
+// =====================================================
+// GET LIVE ATTENDANCE COUNT BY SESSION
+// GET /api/attendance/session/:sessionId/count
+// =====================================================
+//
+// This endpoint is used by Staff Dashboard.
+//
+// Student QR scan:
+//
+// POST /api/attendance/scan
+//
+// saves into:
+//
+// attendance
+//
+// Staff Dashboard:
+//
+// GET /api/attendance/session/:sessionId/count
+//
+// reads from:
+//
+// attendance
+//
+// =====================================================
+
+const getAttendanceCountBySession = async (
+    req,
+    res
+) => {
+    try {
+        const {
+            sessionId
+        } = req.params;
+
+        if (
+            !sessionId ||
+            isNaN(Number(sessionId))
+        ) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Valid session ID is required"
+            });
+        }
+
+        const numericSessionId =
+            Number(sessionId);
+
+        // =================================================
+        // GET SESSION + CLASS
+        // =================================================
+
+        const allocation =
+            await getSessionAllocation(
+                numericSessionId
+            );
+
+        if (!allocation) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Attendance session not found"
+            });
+        }
+
+        const sessionClassId =
+            allocation.session_class_id ||
+            allocation.class_id;
+
+        if (!sessionClassId) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Attendance session is not linked to a class"
+            });
+        }
+
+        // =================================================
+        // GET TOTAL STUDENTS
+        // =================================================
+
+        const [classStudents] =
+            await db.query(
+                `
+                SELECT
+                    COUNT(*) AS total_students
+
+                FROM students st
+
+                INNER JOIN classes c
+                    ON c.class_id = ?
+
+                INNER JOIN departments d
+                    ON d.department_id =
+                       c.department_id
+
+                WHERE st.year = c.year
+
+                  AND LOWER(
+                        TRIM(st.section)
+                      ) =
+                      LOWER(
+                        TRIM(c.section)
+                      )
+
+                  AND LOWER(
+                        TRIM(st.department)
+                      ) =
+                      LOWER(
+                        TRIM(d.department_name)
+                      )
+                `,
+                [sessionClassId]
+            );
+
+        const totalStudents =
+            Number(
+                classStudents[0]
+                    ?.total_students || 0
+            );
+
+        // =================================================
+        // GET ATTENDANCE COUNTS
+        // =================================================
+        //
+        // DISTINCT student_id prevents accidental
+        // duplicate counting.
+        //
+        // =================================================
+
+        const [attendanceRows] =
+            await db.query(
+                `
+                SELECT
+
+                    COUNT(
+                        DISTINCT student_id
+                    ) AS total_attendance,
+
+                    COUNT(
+                        DISTINCT CASE
+                            WHEN UPPER(status) =
+                                 'PRESENT'
+                            THEN student_id
+                        END
+                    ) AS present_count,
+
+                    COUNT(
+                        DISTINCT CASE
+                            WHEN UPPER(status) =
+                                 'LATE'
+                            THEN student_id
+                        END
+                    ) AS late_count
+
+                FROM attendance
+
+                WHERE session_id = ?
+                `,
+                [numericSessionId]
+            );
+
+        const attendance =
+            attendanceRows[0] || {};
+
+        const totalAttendance =
+            Number(
+                attendance.total_attendance || 0
+            );
+
+        const presentCount =
+            Number(
+                attendance.present_count || 0
+            );
+
+        const lateCount =
+            Number(
+                attendance.late_count || 0
+            );
+
+        const absentCount =
+            Math.max(
+                totalStudents -
+                    totalAttendance,
+                0
+            );
+
+        const percentage =
+            totalStudents > 0
+                ? Number(
+                      (
+                          (
+                              totalAttendance /
+                              totalStudents
+                          ) *
+                          100
+                      ).toFixed(2)
+                  )
+                : 0;
+
+        // =================================================
+        // RESPONSE
+        // =================================================
+
+        return res.status(200).json({
+            success: true,
+
+            session_id:
+                numericSessionId,
+
+            subject_id:
+                allocation.subject_id,
+
+            subject_code:
+                allocation.subject_code,
+
+            subject_name:
+                allocation.subject_name,
+
+            staff_id:
+                allocation.staff_id,
+
+            class_id:
+                sessionClassId,
+
+            class_year:
+                allocation.class_year,
+
+            class_section:
+                allocation.class_section,
+
+            department:
+                allocation.department_name ||
+                allocation.allocation_department ||
+                allocation.subject_department ||
+                null,
+
+            department_code:
+                allocation.department_code ||
+                null,
+
+            academic_year:
+                allocation.session_academic_year ||
+                allocation.academic_year ||
+                null,
+
+            semester:
+                allocation.semester ||
+                null,
+
+            total_students:
+                totalStudents,
+
+            total_attendance:
+                totalAttendance,
+
+            present_count:
+                presentCount,
+
+            late_count:
+                lateCount,
+
+            absent_count:
+                absentCount,
+
+            percentage:
+                percentage,
+
+            summary: {
+                total_students:
+                    totalStudents,
+
+                total_attendance:
+                    totalAttendance,
+
+                present_count:
+                    presentCount,
+
+                late_count:
+                    lateCount,
+
+                absent_count:
+                    absentCount,
+
+                percentage:
+                    percentage
+            }
+        });
+
+    } catch (error) {
+        console.error(
+            "Get Attendance Count By Session Error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to fetch live attendance count",
+            error:
+                error.message
         });
     }
 };
@@ -1722,7 +2006,8 @@ const getAttendanceByStudent = async (
             success: false,
             message:
                 "Failed to fetch student attendance",
-            error: error.message
+            error:
+                error.message
         });
     }
 };
@@ -1741,7 +2026,10 @@ const validateStaffForSession = async (
             req.user?.role || ""
         ).toUpperCase();
 
-    // ADMIN can manage any session
+    // -------------------------------------------------
+    // ADMIN
+    // -------------------------------------------------
+
     if (role === "ADMIN") {
         return {
             valid: true
@@ -2070,7 +2358,8 @@ const markAttendance = async (
             success: false,
             message:
                 "Failed to mark attendance",
-            error: error.message
+            error:
+                error.message
         });
     }
 };
@@ -2079,39 +2368,6 @@ const markAttendance = async (
 // =====================================================
 // MARK ATTENDANCE USING QR TOKEN
 // POST /api/attendance/scan
-// =====================================================
-//
-// IMPORTANT:
-//
-// Student ID is NEVER trusted from browser.
-//
-// Logged-in user:
-//
-// JWT user_id
-//      ↓
-// students.user_id
-//      ↓
-// student_id
-//
-// QR content can be:
-//
-// Raw token:
-//
-// "abc123..."
-//
-// OR:
-//
-// JSON:
-//
-// {
-//     "session_id": 1,
-//     "qr_token": "abc123...",
-//     "allocation_id": 2,
-//     "subject_id": 3,
-//     "staff_id": 4,
-//     "class_id": 5
-// }
-//
 // =====================================================
 
 const scanAttendance = async (
@@ -2140,7 +2396,6 @@ const scanAttendance = async (
             });
         }
 
-
         // =================================================
         // EXTRACT REAL TOKEN
         // =================================================
@@ -2150,9 +2405,7 @@ const scanAttendance = async (
                 qr_token
             );
 
-        if (
-            !cleanQrToken
-        ) {
+        if (!cleanQrToken) {
             return res.status(400).json({
                 success: false,
                 message:
@@ -2160,16 +2413,9 @@ const scanAttendance = async (
             });
         }
 
-
         // =================================================
         // GET LOGGED-IN STUDENT
         // =================================================
-        //
-        // IMPORTANT:
-        // student_id is NOT taken from req.body.
-        //
-        // The authenticated JWT identifies the student.
-        //
 
         const student =
             await getLoggedInStudent(
@@ -2189,7 +2435,6 @@ const scanAttendance = async (
                 student.student_id
             );
 
-
         if (
             !studentId ||
             Number.isNaN(studentId)
@@ -2201,19 +2446,8 @@ const scanAttendance = async (
             });
         }
 
-
         // =================================================
         // FIND ACTIVE + NON-EXPIRED SESSION
-        // =================================================
-        //
-        // Expiry is checked directly by MySQL using NOW().
-        //
-        // This avoids timezone mismatch between:
-        //
-        // Render server
-        // Student browser
-        // MySQL
-        //
         // =================================================
 
         const [sessions] =
@@ -2253,7 +2487,6 @@ const scanAttendance = async (
                 [cleanQrToken]
             );
 
-
         // =================================================
         // TOKEN NOT FOUND / EXPIRED
         // =================================================
@@ -2261,7 +2494,6 @@ const scanAttendance = async (
         if (
             sessions.length === 0
         ) {
-
             const [expiredRows] =
                 await db.query(
                     `
@@ -2312,10 +2544,8 @@ const scanAttendance = async (
             });
         }
 
-
         const session =
             sessions[0];
-
 
         // =================================================
         // SESSION MUST HAVE CLASS
@@ -2330,7 +2560,6 @@ const scanAttendance = async (
                     "This attendance session is not linked to a class"
             });
         }
-
 
         // =================================================
         // SECOND EXPIRATION CHECK
@@ -2349,7 +2578,6 @@ const scanAttendance = async (
             });
         }
 
-
         // =================================================
         // VALIDATE STUDENT AGAINST SESSION CLASS
         // =================================================
@@ -2361,7 +2589,6 @@ const scanAttendance = async (
                 ),
                 studentId
             );
-
 
         if (
             !validation.valid
@@ -2375,10 +2602,8 @@ const scanAttendance = async (
             });
         }
 
-
         const allocation =
             validation.allocation;
-
 
         // =================================================
         // CHECK DUPLICATE ATTENDANCE
@@ -2406,7 +2631,6 @@ const scanAttendance = async (
                 ]
             );
 
-
         if (
             existing.length > 0
         ) {
@@ -2418,7 +2642,6 @@ const scanAttendance = async (
                     existing[0]
             });
         }
-
 
         // =================================================
         // DETERMINE PRESENT / LATE
@@ -2436,7 +2659,6 @@ const scanAttendance = async (
             ).substring(0, 8);
 
         if (startTime) {
-
             const [
                 hours,
                 minutes,
@@ -2465,7 +2687,6 @@ const scanAttendance = async (
             }
         }
 
-
         // =================================================
         // INSERT ATTENDANCE
         // =================================================
@@ -2488,7 +2709,6 @@ const scanAttendance = async (
                     attendanceStatus
                 ]
             );
-
 
         // =================================================
         // GET COMPLETE CREATED ATTENDANCE
@@ -2566,7 +2786,6 @@ const scanAttendance = async (
                 [result.insertId]
             );
 
-
         if (
             createdRows.length === 0
         ) {
@@ -2577,10 +2796,8 @@ const scanAttendance = async (
             });
         }
 
-
         const created =
             createdRows[0];
-
 
         // =================================================
         // CONSISTENT RESPONSE
@@ -2626,10 +2843,6 @@ const scanAttendance = async (
                 allocation.semester ||
                 null,
 
-            // ---------------------------------------------
-            // STUDENT OBJECT
-            // ---------------------------------------------
-
             student: {
 
                 student_id:
@@ -2656,10 +2869,6 @@ const scanAttendance = async (
                 section:
                     student.section
             },
-
-            // ---------------------------------------------
-            // SESSION OBJECT
-            // ---------------------------------------------
 
             session: {
 
@@ -2709,10 +2918,6 @@ const scanAttendance = async (
                     session.end_time
             },
 
-            // ---------------------------------------------
-            // ATTENDANCE OBJECT
-            // ---------------------------------------------
-
             attendance: {
 
                 attendance_id:
@@ -2732,18 +2937,12 @@ const scanAttendance = async (
             }
         });
 
-
     } catch (error) {
 
         console.error(
             "Scan Attendance Error:",
             error
         );
-
-
-        // =================================================
-        // DUPLICATE ENTRY
-        // =================================================
 
         if (
             error.code ===
@@ -2755,11 +2954,6 @@ const scanAttendance = async (
                     "Attendance already marked"
             });
         }
-
-
-        // =================================================
-        // SERVER ERROR
-        // =================================================
 
         return res.status(500).json({
             success: false,
@@ -3061,7 +3255,8 @@ const updateAttendance = async (
             success: false,
             message:
                 "Failed to update attendance",
-            error: error.message
+            error:
+                error.message
         });
     }
 };
@@ -3135,7 +3330,8 @@ const deleteAttendance = async (
             success: false,
             message:
                 "Failed to delete attendance",
-            error: error.message
+            error:
+                error.message
         });
     }
 };
@@ -3152,6 +3348,8 @@ module.exports = {
     getAttendanceById,
 
     getAttendanceBySession,
+
+    getAttendanceCountBySession,
 
     getAttendanceByStudent,
 

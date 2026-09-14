@@ -1,5 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+
+const API_BASE_URL =
+    "https://attendance-management-system-gpci.onrender.com/api";
 
 function StudentDashboard() {
     const [user, setUser] = useState(null);
@@ -15,14 +18,213 @@ function StudentDashboard() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
 
+    // Prevent multiple attendance requests from running together
+    const requestInProgressRef = useRef(false);
+
     // =====================================================
-    // LOAD USER
+    // LOAD ATTENDANCE
+    // =====================================================
+
+    const loadAttendanceStats = useCallback(
+        async (userId, showLoading = false) => {
+            if (!userId) {
+                return;
+            }
+
+            // Prevent overlapping requests
+            if (requestInProgressRef.current) {
+                return;
+            }
+
+            requestInProgressRef.current = true;
+
+            try {
+                if (showLoading) {
+                    setLoading(true);
+                }
+
+                setError("");
+
+                const token = localStorage.getItem("token");
+
+                if (!token) {
+                    setError(
+                        "Login session expired. Please login again."
+                    );
+
+                    return;
+                }
+
+                const response = await fetch(
+                    `${API_BASE_URL}/attendance/student/${userId}`,
+                    {
+                        method: "GET",
+                        headers: {
+                            Authorization: `Bearer ${token}`,
+                            "Content-Type": "application/json",
+                        },
+
+                        // Do not allow browser cache to return old attendance
+                        cache: "no-store",
+                    }
+                );
+
+                let data = {};
+
+                try {
+                    data = await response.json();
+                } catch {
+                    data = {};
+                }
+
+                if (!response.ok) {
+                    throw new Error(
+                        data?.message ||
+                            "Failed to load attendance."
+                    );
+                }
+
+                if (!data.success) {
+                    throw new Error(
+                        data?.message ||
+                            "Unable to load attendance."
+                    );
+                }
+
+                // =================================================
+                // GET ATTENDANCE RECORDS
+                // =================================================
+
+                const records = Array.isArray(data.attendance)
+                    ? data.attendance
+                    : Array.isArray(data.records)
+                    ? data.records
+                    : Array.isArray(data.attendance_records)
+                    ? data.attendance_records
+                    : [];
+
+                // =================================================
+                // CALCULATE PRESENT
+                // =================================================
+
+                const present = records.filter(
+                    (record) =>
+                        String(record?.status || "")
+                            .trim()
+                            .toUpperCase() === "PRESENT"
+                ).length;
+
+                // =================================================
+                // CALCULATE LATE
+                // =================================================
+
+                const late = records.filter(
+                    (record) =>
+                        String(record?.status || "")
+                            .trim()
+                            .toUpperCase() === "LATE"
+                ).length;
+
+                // =================================================
+                // CALCULATE ABSENT
+                // =================================================
+
+                const absent = records.filter(
+                    (record) =>
+                        String(record?.status || "")
+                            .trim()
+                            .toUpperCase() === "ABSENT"
+                ).length;
+
+                // =================================================
+                // TOTAL
+                //
+                // IMPORTANT:
+                // If backend supplies total_students/total,
+                // use it when available.
+                // Otherwise use attendance records.
+                // =================================================
+
+                const backendTotal =
+                    Number(
+                        data?.total_students ??
+                            data?.total ??
+                            data?.summary?.total_students ??
+                            data?.summary?.total
+                    );
+
+                const total =
+                    Number.isFinite(backendTotal) &&
+                    backendTotal > 0
+                        ? backendTotal
+                        : records.length;
+
+                // =================================================
+                // ATTENDED
+                //
+                // PRESENT + LATE are considered attended.
+                // =================================================
+
+                const attended = present + late;
+
+                // =================================================
+                // PERCENTAGE
+                // =================================================
+
+                const percentage =
+                    total > 0
+                        ? Number(
+                              (
+                                  (attended / total) *
+                                  100
+                              ).toFixed(1)
+                          )
+                        : 0;
+
+                // =================================================
+                // UPDATE STATE
+                // =================================================
+
+                setStats({
+                    total,
+                    present,
+                    late,
+                    absent,
+                    percentage,
+                });
+            } catch (err) {
+                console.error(
+                    "Attendance stats error:",
+                    err
+                );
+
+                setError(
+                    err?.message ||
+                        "Unable to load attendance."
+                );
+            } finally {
+                requestInProgressRef.current = false;
+
+                if (showLoading) {
+                    setLoading(false);
+                }
+            }
+        },
+        []
+    );
+
+    // =====================================================
+    // LOAD USER + INITIAL ATTENDANCE
     // =====================================================
 
     useEffect(() => {
         const savedUser = localStorage.getItem("user");
 
         if (!savedUser) {
+            setError(
+                "Student information not found. Please login again."
+            );
+
             setLoading(false);
             return;
         }
@@ -33,136 +235,141 @@ function StudentDashboard() {
             setUser(userData);
 
             if (userData?.user_id) {
-                loadAttendanceStats(userData.user_id);
+                loadAttendanceStats(
+                    userData.user_id,
+                    true
+                );
             } else {
-                setError("Student information not found.");
+                setError(
+                    "Student information not found."
+                );
+
                 setLoading(false);
             }
-        } catch (err) {
-            console.error("Invalid user data:", err);
-
-            setError("Unable to read student information.");
-            setLoading(false);
-        }
-    }, []);
-
-    // =====================================================
-    // LOAD ATTENDANCE
-    // =====================================================
-
-    const loadAttendanceStats = async (userId) => {
-        try {
-            setLoading(true);
-            setError("");
-
-            const token = localStorage.getItem("token");
-
-            if (!token) {
-                setError("Login session expired. Please login again.");
-                setLoading(false);
-                return;
-            }
-
-            const response = await fetch(
-                `https://attendance-management-system-gpci.onrender.com/api/attendance/student/${userId}`,
-                {
-                    method: "GET",
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        "Content-Type": "application/json",
-                    },
-                }
-            );
-
-            let data = {};
-
-            try {
-                data = await response.json();
-            } catch {
-                data = {};
-            }
-
-            if (!response.ok) {
-                throw new Error(
-                    data?.message ||
-                    "Failed to load attendance."
-                );
-            }
-
-            if (!data.success) {
-                throw new Error(
-                    data?.message ||
-                    "Unable to load attendance."
-                );
-            }
-
-            const records = Array.isArray(data.attendance)
-                ? data.attendance
-                : [];
-
-            // =================================================
-            // CALCULATE ATTENDANCE
-            // =================================================
-
-            const present = records.filter(
-                (record) =>
-                    String(record?.status || "")
-                        .toUpperCase() === "PRESENT"
-            ).length;
-
-            const late = records.filter(
-                (record) =>
-                    String(record?.status || "")
-                        .toUpperCase() === "LATE"
-            ).length;
-
-            const absent = records.filter(
-                (record) =>
-                    String(record?.status || "")
-                        .toUpperCase() === "ABSENT"
-            ).length;
-
-            const total = records.length;
-
-            // Present + Late = Attended
-            const attended = present + late;
-
-            const percentage =
-                total > 0
-                    ? Number(
-                          ((attended / total) * 100).toFixed(1)
-                      )
-                    : 0;
-
-            setStats({
-                total,
-                present,
-                late,
-                absent,
-                percentage,
-            });
         } catch (err) {
             console.error(
-                "Attendance stats error:",
+                "Invalid user data:",
                 err
             );
 
             setError(
-                err?.message ||
-                "Unable to load attendance."
+                "Unable to read student information."
             );
-        } finally {
+
             setLoading(false);
         }
-    };
+    }, [loadAttendanceStats]);
 
     // =====================================================
-    // REFRESH
+    // AUTO REFRESH
+    //
+    // Every 2 seconds the dashboard asks the backend
+    // for the latest attendance.
+    //
+    // This means:
+    //
+    // Student scans QR
+    //       ↓
+    // Backend saves attendance
+    //       ↓
+    // Dashboard requests latest data
+    //       ↓
+    // PRESENT count updates
+    // =====================================================
+
+    useEffect(() => {
+        if (!user?.user_id) {
+            return undefined;
+        }
+
+        const intervalId = setInterval(() => {
+            loadAttendanceStats(
+                user.user_id,
+                false
+            );
+        }, 2000);
+
+        return () => {
+            clearInterval(intervalId);
+        };
+    }, [user?.user_id, loadAttendanceStats]);
+
+    // =====================================================
+    // REFRESH WHEN TAB BECOMES ACTIVE
+    //
+    // Useful when student scans QR in another page/tab
+    // and comes back to dashboard.
+    // =====================================================
+
+    useEffect(() => {
+        if (!user?.user_id) {
+            return undefined;
+        }
+
+        const handleVisibilityChange = () => {
+            if (
+                document.visibilityState ===
+                "visible"
+            ) {
+                loadAttendanceStats(
+                    user.user_id,
+                    false
+                );
+            }
+        };
+
+        document.addEventListener(
+            "visibilitychange",
+            handleVisibilityChange
+        );
+
+        return () => {
+            document.removeEventListener(
+                "visibilitychange",
+                handleVisibilityChange
+            );
+        };
+    }, [user?.user_id, loadAttendanceStats]);
+
+    // =====================================================
+    // REFRESH WHEN WINDOW GETS FOCUS
+    // =====================================================
+
+    useEffect(() => {
+        if (!user?.user_id) {
+            return undefined;
+        }
+
+        const handleFocus = () => {
+            loadAttendanceStats(
+                user.user_id,
+                false
+            );
+        };
+
+        window.addEventListener(
+            "focus",
+            handleFocus
+        );
+
+        return () => {
+            window.removeEventListener(
+                "focus",
+                handleFocus
+            );
+        };
+    }, [user?.user_id, loadAttendanceStats]);
+
+    // =====================================================
+    // MANUAL REFRESH
     // =====================================================
 
     const handleRefresh = () => {
         if (user?.user_id) {
-            loadAttendanceStats(user.user_id);
+            loadAttendanceStats(
+                user.user_id,
+                true
+            );
         }
     };
 
@@ -177,6 +384,10 @@ function StudentDashboard() {
         attendancePercentage >= 75
             ? "Good attendance"
             : "Below 75%";
+
+    // =====================================================
+    // RENDER
+    // =====================================================
 
     return (
         <div className="space-y-8">
@@ -195,7 +406,8 @@ function StudentDashboard() {
                     <p className="mt-2 text-slate-500">
                         Welcome back,{" "}
                         <span className="font-semibold text-slate-700">
-                            {user?.username || "Student"}
+                            {user?.username ||
+                                "Student"}
                         </span>
                     </p>
                 </div>
@@ -210,7 +422,9 @@ function StudentDashboard() {
                         disabled={loading}
                         className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                        {loading ? "Refreshing..." : "↻ Refresh"}
+                        {loading
+                            ? "Refreshing..."
+                            : "↻ Refresh"}
                     </button>
 
                     {/* USER */}
@@ -220,12 +434,14 @@ function StudentDashboard() {
                         <div className="flex h-11 w-11 items-center justify-center rounded-full bg-indigo-600 font-bold text-white">
                             {user?.username
                                 ?.charAt(0)
-                                ?.toUpperCase() || "S"}
+                                ?.toUpperCase() ||
+                                "S"}
                         </div>
 
                         <div>
                             <p className="font-semibold text-slate-800">
-                                {user?.username || "Student"}
+                                {user?.username ||
+                                    "Student"}
                             </p>
 
                             <p className="text-xs font-medium text-slate-500">
@@ -445,7 +661,8 @@ function StudentDashboard() {
 
                     <span
                         className={`rounded-full px-4 py-2 text-sm font-semibold ${
-                            attendancePercentage >= 75
+                            attendancePercentage >=
+                            75
                                 ? "bg-green-100 text-green-700"
                                 : "bg-red-100 text-red-700"
                         }`}
@@ -473,7 +690,8 @@ function StudentDashboard() {
 
                         <div
                             className={`h-full rounded-full transition-all duration-500 ${
-                                attendancePercentage >= 75
+                                attendancePercentage >=
+                                75
                                     ? "bg-green-500"
                                     : "bg-red-500"
                             }`}
@@ -489,7 +707,9 @@ function StudentDashboard() {
 
                     <div className="mt-2 flex justify-between text-xs text-slate-400">
                         <span>0%</span>
-                        <span>75% required</span>
+                        <span>
+                            75% required
+                        </span>
                         <span>100%</span>
                     </div>
 
@@ -509,7 +729,8 @@ function StudentDashboard() {
                     </h2>
 
                     <p className="mt-1 text-sm text-slate-500">
-                        Quickly access student features
+                        Quickly access student
+                        features
                     </p>
                 </div>
 
@@ -554,7 +775,8 @@ function StudentDashboard() {
                         </h2>
 
                         <p className="mt-1 text-sm text-slate-500">
-                            Detailed overview of your attendance
+                            Detailed overview of
+                            your attendance
                         </p>
                     </div>
 
@@ -579,7 +801,9 @@ function StudentDashboard() {
                                 </td>
 
                                 <td className="py-4 text-right font-semibold text-slate-800">
-                                    {loading ? "..." : stats.total}
+                                    {loading
+                                        ? "..."
+                                        : stats.total}
                                 </td>
                             </tr>
 
@@ -589,7 +813,9 @@ function StudentDashboard() {
                                 </td>
 
                                 <td className="py-4 text-right font-semibold text-green-600">
-                                    {loading ? "..." : stats.present}
+                                    {loading
+                                        ? "..."
+                                        : stats.present}
                                 </td>
                             </tr>
 
@@ -599,7 +825,9 @@ function StudentDashboard() {
                                 </td>
 
                                 <td className="py-4 text-right font-semibold text-yellow-600">
-                                    {loading ? "..." : stats.late}
+                                    {loading
+                                        ? "..."
+                                        : stats.late}
                                 </td>
                             </tr>
 
@@ -609,13 +837,16 @@ function StudentDashboard() {
                                 </td>
 
                                 <td className="py-4 text-right font-semibold text-red-600">
-                                    {loading ? "..." : stats.absent}
+                                    {loading
+                                        ? "..."
+                                        : stats.absent}
                                 </td>
                             </tr>
 
                             <tr>
                                 <td className="py-4 font-medium text-slate-700">
-                                    Attendance Percentage
+                                    Attendance
+                                    Percentage
                                 </td>
 
                                 <td className="py-4 text-right font-semibold text-indigo-600">

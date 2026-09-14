@@ -1,23 +1,49 @@
 const express = require("express");
 
+const router = express.Router();
+
 const {
     getAttendance,
     getAttendanceById,
     getAttendanceBySession,
+    getAttendanceCountBySession,
     getAttendanceByStudent,
     markAttendance,
     scanAttendance,
     updateAttendance,
-    deleteAttendance
+    deleteAttendance,
+    getMySubjectClasses,
+    getMySubjectStudents
 } = require("../controllers/attendanceController");
 
-const authenticateToken = require("../middleware/authMiddleware");
-const authorizeRoles = require("../middleware/roleMiddleware");
+const {
+    authenticateToken,
+    authorizeRoles
+} = require("../middleware/authMiddleware");
 
-const router = express.Router();
+
+// =====================================================
+// ATTENDANCE ROUTES
+// =====================================================
+//
+// Base:
+//
+// /api/attendance
+//
+// =====================================================
+
 
 // =====================================================
 // GET ALL ATTENDANCE
+// =====================================================
+//
+// GET /api/attendance
+//
+// ADMIN
+// HOD
+// STAFF
+// TEACHER
+//
 // =====================================================
 
 router.get(
@@ -32,9 +58,13 @@ router.get(
     getAttendance
 );
 
+
 // =====================================================
 // GET ATTENDANCE BY SESSION
-// IMPORTANT: before /:id
+// =====================================================
+//
+// GET /api/attendance/session/:sessionId
+//
 // =====================================================
 
 router.get(
@@ -44,13 +74,42 @@ router.get(
         "ADMIN",
         "HOD",
         "STAFF",
-        "TEACHER"
+        "TEACHER",
+        "STUDENT"
     ),
     getAttendanceBySession
 );
 
+
+// =====================================================
+// GET LIVE ATTENDANCE COUNT
+// =====================================================
+//
+// GET /api/attendance/session/:sessionId/count
+//
+// Used by Staff Dashboard.
+//
+// =====================================================
+
+router.get(
+    "/session/:sessionId/count",
+    authenticateToken,
+    authorizeRoles(
+        "ADMIN",
+        "HOD",
+        "STAFF",
+        "TEACHER"
+    ),
+    getAttendanceCountBySession
+);
+
+
 // =====================================================
 // GET ATTENDANCE BY STUDENT
+// =====================================================
+//
+// GET /api/attendance/student/:studentId
+//
 // =====================================================
 
 router.get(
@@ -66,8 +125,57 @@ router.get(
     getAttendanceByStudent
 );
 
+
 // =====================================================
-// MARK ATTENDANCE
+// GET MY SUBJECT + CLASS ALLOCATIONS
+// =====================================================
+//
+// GET /api/attendance/my-subject-classes
+//
+// =====================================================
+
+router.get(
+    "/my-subject-classes",
+    authenticateToken,
+    authorizeRoles(
+        "STAFF",
+        "TEACHER"
+    ),
+    getMySubjectClasses
+);
+
+
+// =====================================================
+// GET STUDENTS FOR MY SUBJECT + CLASS
+// =====================================================
+//
+// GET /api/attendance/my-subject-students
+//
+// Example:
+//
+// /api/attendance/my-subject-students
+//     ?subject_id=1
+//     &class_id=2
+//
+// =====================================================
+
+router.get(
+    "/my-subject-students",
+    authenticateToken,
+    authorizeRoles(
+        "STAFF",
+        "TEACHER"
+    ),
+    getMySubjectStudents
+);
+
+
+// =====================================================
+// MARK ATTENDANCE MANUALLY
+// =====================================================
+//
+// POST /api/attendance
+//
 // =====================================================
 
 router.post(
@@ -81,9 +189,21 @@ router.post(
     markAttendance
 );
 
+
 // =====================================================
-// QR SCAN ATTENDANCE
-// STUDENT CAN USE THIS
+// SCAN QR ATTENDANCE
+// =====================================================
+//
+// POST /api/attendance/scan
+//
+// Student sends:
+//
+// {
+//     "qr_token": "..."
+// }
+//
+// Student ID is resolved from JWT.
+//
 // =====================================================
 
 router.post(
@@ -98,9 +218,15 @@ router.post(
     scanAttendance
 );
 
+
 // =====================================================
 // GET ATTENDANCE BY ID
-// Keep after /session and /student routes
+// =====================================================
+//
+// GET /api/attendance/:id
+//
+// Keep this AFTER the more specific routes.
+//
 // =====================================================
 
 router.get(
@@ -115,8 +241,13 @@ router.get(
     getAttendanceById
 );
 
+
 // =====================================================
 // UPDATE ATTENDANCE
+// =====================================================
+//
+// PUT /api/attendance/:id
+//
 // =====================================================
 
 router.put(
@@ -130,16 +261,29 @@ router.put(
     updateAttendance
 );
 
+
 // =====================================================
 // DELETE ATTENDANCE
+// =====================================================
+//
+// DELETE /api/attendance/:id
+//
 // ADMIN ONLY
+//
 // =====================================================
 
 router.delete(
     "/:id",
     authenticateToken,
-    authorizeRoles("ADMIN"),
+    authorizeRoles(
+        "ADMIN"
+    ),
     deleteAttendance
 );
+
+
+// =====================================================
+// EXPORT ROUTER
+// =====================================================
 
 module.exports = router;
