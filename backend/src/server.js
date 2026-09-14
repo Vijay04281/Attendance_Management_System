@@ -1,114 +1,157 @@
+// =====================================================
+// ATTENDANCE MANAGEMENT SYSTEM
+// BACKEND SERVER
+// =====================================================
+
+// =====================================================
+// LOAD ENVIRONMENT VARIABLES FIRST
+// =====================================================
+
+const path = require("path");
+const dotenv = require("dotenv");
+
+const envPath = path.resolve(__dirname, "../.env");
+
+const envResult = dotenv.config({
+  path: envPath,
+  override: true,
+});
+
+// =====================================================
+// ENVIRONMENT VALIDATION
+// =====================================================
+
+console.log("================================================");
+console.log("Environment Configuration");
+console.log("================================================");
+console.log("ENV FILE:", envPath);
+
+if (envResult.error) {
+  console.error("ERROR LOADING .env:");
+  console.error(envResult.error.message);
+} else {
+  console.log(".env file loaded successfully");
+}
+
+console.log("DB_HOST:", process.env.DB_HOST || "undefined");
+console.log("DB_PORT:", process.env.DB_PORT || "undefined");
+console.log("DB_USER:", process.env.DB_USER || "undefined");
+console.log("DB_NAME:", process.env.DB_NAME || "undefined");
+console.log(
+  "DB_PASSWORD:",
+  process.env.DB_PASSWORD ? "LOADED" : "NOT LOADED"
+);
+console.log("PORT:", process.env.PORT || "5000");
+console.log(
+  "JWT_SECRET:",
+  process.env.JWT_SECRET ? "LOADED" : "NOT LOADED"
+);
+console.log("================================================");
+
+// =====================================================
+// REQUIRED ENVIRONMENT VARIABLES
+// =====================================================
+
+const requiredEnv = [
+  "DB_HOST",
+  "DB_PORT",
+  "DB_USER",
+  "DB_PASSWORD",
+  "DB_NAME",
+  "JWT_SECRET",
+];
+
+const missingEnv = requiredEnv.filter(
+  (key) => !process.env[key] || String(process.env[key]).trim() === ""
+);
+
+if (missingEnv.length > 0) {
+  console.error("");
+  console.error("================================================");
+  console.error("MISSING ENVIRONMENT VARIABLES");
+  console.error("================================================");
+  console.error(missingEnv.join(", "));
+  console.error("================================================");
+  console.error("");
+  process.exit(1);
+}
+
+// =====================================================
+// IMPORT DEPENDENCIES AFTER ENV IS LOADED
+// =====================================================
+
 const express = require("express");
 const cors = require("cors");
-require("dotenv").config();
 
 // =====================================================
 // ROUTES
 // =====================================================
 
 const authRoutes = require("./routes/authRoutes");
-
 const studentRoutes = require("./routes/studentRoutes");
-
 const staffRoutes = require("./routes/staffRoutes");
-
 const departmentRoutes = require("./routes/departmentRoutes");
-
 const subjectRoutes = require("./routes/subjectRoutes");
-
 const classRoutes = require("./routes/classRoutes");
-
 const assignmentRoutes = require("./routes/assignmentRoutes");
-
 const timetableRoutes = require("./routes/timetableRoutes");
-
-const attendanceSessionRoutes = require(
-    "./routes/attendanceSessionRoutes"
-);
-
-const attendanceRoutes = require(
-    "./routes/attendanceRoutes"
-);
-
-const classTeacherRoutes = require(
-    "./routes/classTeacherRoutes"
-);
-
-const classTeacherAssignmentRoutes = require(
-    "./routes/classTeacherAssignmentRoutes"
-);
-
-const subjectAllocationRoutes = require(
-    "./routes/subjectAllocationRoutes"
-);
+const attendanceSessionRoutes = require("./routes/attendanceSessionRoutes");
+const attendanceRoutes = require("./routes/attendanceRoutes");
+const classTeacherRoutes = require("./routes/classTeacherRoutes");
+const classTeacherAssignmentRoutes = require("./routes/classTeacherAssignmentRoutes");
+const subjectAllocationRoutes = require("./routes/subjectAllocationRoutes");
+const attendanceRecordRoutes = require("./routes/attendanceRecordRoutes");
+const attendanceReportRoutes = require("./routes/attendanceReportRoutes");
+const qrCodeRoutes = require("./routes/qrCodeRoutes");
+const auditLogRoutes = require("./routes/auditLogRoutes");
+const adminRoutes = require("./routes/adminRoutes");
 
 // =====================================================
-// ATTENDANCE / ADMIN ROUTES
-// =====================================================
-
-const attendanceRecordRoutes = require(
-    "./routes/attendanceRecordRoutes"
-);
-
-const attendanceReportRoutes = require(
-    "./routes/attendanceReportRoutes"
-);
-
-const qrCodeRoutes = require(
-    "./routes/qrCodeRoutes"
-);
-
-const auditLogRoutes = require(
-    "./routes/auditLogRoutes"
-);
-
-const adminRoutes = require(
-    "./routes/adminRoutes"
-);
-
-// =====================================================
-// APP
+// EXPRESS APP
 // =====================================================
 
 const app = express();
 
 // =====================================================
-// MIDDLEWARE
-// =====================================================
-
 // CORS
-app.use(
-    cors({
-        origin: true,
-        credentials: true
-    })
-);
+// =====================================================
 
-// JSON request body
 app.use(
-    express.json({
-        limit: "10mb"
-    })
-);
-
-// URL encoded request body
-app.use(
-    express.urlencoded({
-        extended: true,
-        limit: "10mb"
-    })
+  cors({
+    origin: true,
+    credentials: true,
+  })
 );
 
 // =====================================================
-// TEST ROUTE
+// BODY PARSERS
+// =====================================================
+
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true }));
+
+// =====================================================
+// REQUEST LOGGER
+// =====================================================
+
+app.use((req, res, next) => {
+  console.log(
+    `[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`
+  );
+
+  next();
+});
+
+// =====================================================
+// ROOT
 // =====================================================
 
 app.get("/", (req, res) => {
-    res.json({
-        success: true,
-        message: "Attendance Management System API is running",
-        version: "1.0.0"
-    });
+  res.json({
+    success: true,
+    message: "Attendance Management System API is running",
+    version: "1.0.0",
+  });
 });
 
 // =====================================================
@@ -116,315 +159,131 @@ app.get("/", (req, res) => {
 // =====================================================
 
 app.get("/api/health", (req, res) => {
-    res.json({
-        success: true,
-        message: "API is healthy",
-        timestamp: new Date().toISOString()
-    });
+  res.json({
+    success: true,
+    message: "API is healthy",
+    database: "configured",
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // =====================================================
-// ROUTE VALIDATION
+// ROUTE MOUNT HELPER
 // =====================================================
 
-const mountRoute = (path, route, routeName) => {
-    if (!route) {
-        console.error(
-            "================================================"
-        );
+const mountRoute = (path, route, name) => {
+  if (!route) {
+    console.error(`✗ ${name} FAILED - route is undefined`);
+    return;
+  }
 
-        console.error(
-            `ERROR: ${routeName} is undefined`
-        );
+  app.use(path, route);
 
-        console.error(
-            `Route path: ${path}`
-        );
-
-        console.error(
-            "Check the corresponding routes file."
-        );
-
-        console.error(
-            "It must contain:"
-        );
-
-        console.error(
-            "module.exports = router;"
-        );
-
-        console.error(
-            "================================================"
-        );
-
-        process.exit(1);
-    }
-
-    if (
-        typeof route !== "function" &&
-        typeof route.use !== "function"
-    ) {
-        console.error(
-            "================================================"
-        );
-
-        console.error(
-            `ERROR: ${routeName} is not a valid Express router`
-        );
-
-        console.error(
-            `Route path: ${path}`
-        );
-
-        console.error(
-            "The route file must export the Express router:"
-        );
-
-        console.error(
-            "module.exports = router;"
-        );
-
-        console.error(
-            "================================================"
-        );
-
-        console.error(
-            "Received value:"
-        );
-
-        console.error(route);
-
-        process.exit(1);
-    }
-
-    app.use(path, route);
-
-    console.log(
-        `✓ Mounted ${routeName} -> ${path}`
-    );
+  console.log(`✓ Mounted ${name} -> ${path}`);
 };
 
 // =====================================================
-// API ROUTES
+// MOUNT ROUTES
 // =====================================================
 
-// -----------------------------------------------------
-// AUTHENTICATION
-// -----------------------------------------------------
+mountRoute("/api/auth", authRoutes, "authRoutes");
+
+mountRoute("/api/students", studentRoutes, "studentRoutes");
+
+mountRoute("/api/staff", staffRoutes, "staffRoutes");
 
 mountRoute(
-    "/api/auth",
-    authRoutes,
-    "authRoutes"
+  "/api/departments",
+  departmentRoutes,
+  "departmentRoutes"
 );
 
-// -----------------------------------------------------
-// STUDENTS
-// -----------------------------------------------------
+mountRoute("/api/subjects", subjectRoutes, "subjectRoutes");
+
+mountRoute("/api/classes", classRoutes, "classRoutes");
 
 mountRoute(
-    "/api/students",
-    studentRoutes,
-    "studentRoutes"
+  "/api/assignments",
+  assignmentRoutes,
+  "assignmentRoutes"
 );
-
-// -----------------------------------------------------
-// STAFF
-// -----------------------------------------------------
 
 mountRoute(
-    "/api/staff",
-    staffRoutes,
-    "staffRoutes"
+  "/api/timetables",
+  timetableRoutes,
+  "timetableRoutes"
 );
-
-// -----------------------------------------------------
-// DEPARTMENTS
-// -----------------------------------------------------
 
 mountRoute(
-    "/api/departments",
-    departmentRoutes,
-    "departmentRoutes"
+  "/api/subject-allocations",
+  subjectAllocationRoutes,
+  "subjectAllocationRoutes"
 );
-
-// -----------------------------------------------------
-// SUBJECTS
-// -----------------------------------------------------
 
 mountRoute(
-    "/api/subjects",
-    subjectRoutes,
-    "subjectRoutes"
+  "/api/attendance-sessions",
+  attendanceSessionRoutes,
+  "attendanceSessionRoutes"
 );
-
-// -----------------------------------------------------
-// CLASSES
-// -----------------------------------------------------
 
 mountRoute(
-    "/api/classes",
-    classRoutes,
-    "classRoutes"
+  "/api/attendance",
+  attendanceRoutes,
+  "attendanceRoutes"
 );
-
-// -----------------------------------------------------
-// GENERAL ASSIGNMENTS
-// -----------------------------------------------------
 
 mountRoute(
-    "/api/assignments",
-    assignmentRoutes,
-    "assignmentRoutes"
+  "/api/attendance-records",
+  attendanceRecordRoutes,
+  "attendanceRecordRoutes"
 );
-
-// -----------------------------------------------------
-// TIMETABLE
-// -----------------------------------------------------
-//
-// GET  /api/timetables
-// GET  /api/timetables/:id
-// POST /api/timetables
-// PUT  /api/timetables/:id
-// DELETE /api/timetables/:id
-//
-// STAFF:
-// GET /api/timetables/staff
-//
-// STUDENT:
-// GET /api/timetables/student
-//
-// -----------------------------------------------------
 
 mountRoute(
-    "/api/timetables",
-    timetableRoutes,
-    "timetableRoutes"
+  "/api/attendance-reports",
+  attendanceReportRoutes,
+  "attendanceReportRoutes"
 );
-
-// -----------------------------------------------------
-// SUBJECT ALLOCATIONS
-// -----------------------------------------------------
 
 mountRoute(
-    "/api/subject-allocations",
-    subjectAllocationRoutes,
-    "subjectAllocationRoutes"
+  "/api/qr-codes",
+  qrCodeRoutes,
+  "qrCodeRoutes"
 );
-
-// -----------------------------------------------------
-// ATTENDANCE SESSIONS
-// -----------------------------------------------------
 
 mountRoute(
-    "/api/attendance-sessions",
-    attendanceSessionRoutes,
-    "attendanceSessionRoutes"
+  "/api/class-teacher",
+  classTeacherRoutes,
+  "classTeacherRoutes"
 );
-
-// -----------------------------------------------------
-// ATTENDANCE
-// -----------------------------------------------------
 
 mountRoute(
-    "/api/attendance",
-    attendanceRoutes,
-    "attendanceRoutes"
+  "/api/class-teacher-assignments",
+  classTeacherAssignmentRoutes,
+  "classTeacherAssignmentRoutes"
 );
-
-// -----------------------------------------------------
-// ATTENDANCE RECORDS
-// -----------------------------------------------------
 
 mountRoute(
-    "/api/attendance-records",
-    attendanceRecordRoutes,
-    "attendanceRecordRoutes"
+  "/api/admin",
+  adminRoutes,
+  "adminRoutes"
 );
-
-// -----------------------------------------------------
-// ATTENDANCE REPORTS
-// -----------------------------------------------------
 
 mountRoute(
-    "/api/attendance-reports",
-    attendanceReportRoutes,
-    "attendanceReportRoutes"
+  "/api/audit-logs",
+  auditLogRoutes,
+  "auditLogRoutes"
 );
-
-// -----------------------------------------------------
-// QR CODES
-// -----------------------------------------------------
-
-mountRoute(
-    "/api/qr-codes",
-    qrCodeRoutes,
-    "qrCodeRoutes"
-);
-
-// -----------------------------------------------------
-// CLASS TEACHER
-// -----------------------------------------------------
-
-mountRoute(
-    "/api/class-teacher",
-    classTeacherRoutes,
-    "classTeacherRoutes"
-);
-
-// -----------------------------------------------------
-// CLASS TEACHER ASSIGNMENTS
-// -----------------------------------------------------
-
-mountRoute(
-    "/api/class-teacher-assignments",
-    classTeacherAssignmentRoutes,
-    "classTeacherAssignmentRoutes"
-);
-
-// -----------------------------------------------------
-// ADMIN
-// -----------------------------------------------------
-
-mountRoute(
-    "/api/admin",
-    adminRoutes,
-    "adminRoutes"
-);
-
-// -----------------------------------------------------
-// AUDIT LOGS
-// -----------------------------------------------------
-
-mountRoute(
-    "/api/audit-logs",
-    auditLogRoutes,
-    "auditLogRoutes"
-);
-
-// =====================================================
-// NOTIFICATIONS
-// =====================================================
-//
-// Notifications are intentionally not mounted yet.
-//
-// We will correct notificationRoutes.js before mounting
-// it so that the notification API matches the existing
-// frontend and database structure.
-//
-// =====================================================
-
 
 // =====================================================
 // 404 HANDLER
 // =====================================================
 
 app.use((req, res) => {
-    res.status(404).json({
-        success: false,
-        message: "Route not found",
-        path: req.originalUrl
-    });
+  res.status(404).json({
+    success: false,
+    message: "API endpoint not found",
+    path: req.originalUrl,
+  });
 });
 
 // =====================================================
@@ -432,73 +291,69 @@ app.use((req, res) => {
 // =====================================================
 
 app.use((err, req, res, next) => {
-    console.error(
-        "================================================"
-    );
+  console.error("================================================");
+  console.error("GLOBAL SERVER ERROR");
+  console.error("================================================");
+  console.error(err);
+  console.error("================================================");
 
-    console.error(
-        "Global Server Error:"
-    );
-
-    console.error(err);
-
-    console.error(
-        "================================================"
-    );
-
-    const statusCode =
-        err.status ||
-        err.statusCode ||
-        500;
-
-    res.status(statusCode).json({
-        success: false,
-        message:
-            err.message ||
-            "Internal server error"
-    });
+  res.status(err.status || 500).json({
+    success: false,
+    message: err.message || "Internal server error",
+  });
 });
 
 // =====================================================
-// SERVER
+// SERVER PORT
 // =====================================================
 
-const PORT = process.env.PORT || 5000;
+const PORT = Number(process.env.PORT) || 5000;
 
-app.listen(
-    PORT,
-    "0.0.0.0",
-    () => {
-        console.log(
-            "=============================================="
-        );
+// =====================================================
+// START SERVER
+// =====================================================
 
-        console.log(
-            "Attendance Management System API"
-        );
+const server = app.listen(PORT, "0.0.0.0", () => {
+  console.log("");
+  console.log("==============================================");
+  console.log("Attendance Management System API");
+  console.log("==============================================");
+  console.log(`Local:   http://localhost:${PORT}`);
+  console.log(`Network: http://localhost:${PORT}`);
+  console.log("==============================================");
+  console.log("Server started successfully");
+  console.log("==============================================");
+});
 
-        console.log(
-            "=============================================="
-        );
+// =====================================================
+// SERVER ERROR
+// =====================================================
 
-        console.log(
-            `Local:   http://localhost:${PORT}`
-        );
+server.on("error", (error) => {
+  console.error("");
+  console.error("================================================");
+  console.error("SERVER START ERROR");
+  console.error("================================================");
 
-        console.log(
-            `Network: http://10.52.2.243:${PORT}`
-        );
+  if (error.code === "EADDRINUSE") {
+    console.error(`Port ${PORT} is already in use.`);
+  } else {
+    console.error(error);
+  }
 
-        console.log(
-            "=============================================="
-        );
+  console.error("================================================");
+});
 
-        console.log(
-            "Server started successfully"
-        );
+// =====================================================
+// PROCESS ERROR HANDLERS
+// =====================================================
 
-        console.log(
-            "=============================================="
-        );
-    }
-);
+process.on("uncaughtException", (error) => {
+  console.error("UNCAUGHT EXCEPTION:");
+  console.error(error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("UNHANDLED PROMISE REJECTION:");
+  console.error(reason);
+});
