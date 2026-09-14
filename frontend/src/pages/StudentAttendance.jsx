@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import React, {
+    useCallback,
+    useEffect,
+    useMemo,
+    useState,
+} from "react";
+
 import {
     PieChart,
     Pie,
@@ -12,6 +18,7 @@ import {
     YAxis,
     CartesianGrid,
 } from "recharts";
+
 import {
     FaBook,
     FaCheckCircle,
@@ -23,254 +30,663 @@ import {
     FaChartPie,
 } from "react-icons/fa";
 
-const API_URL = "https://attendance-management-system-gpci.onrender.com/api";
+// =====================================================
+// API
+// =====================================================
+
+const API_URL =
+    "https://attendance-management-system-gpci.onrender.com/api";
+
+
+// =====================================================
+// COMPONENT
+// =====================================================
 
 function StudentAttendance() {
-    const [attendance, setAttendance] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
 
-    const [search, setSearch] = useState("");
-    const [dateFilter, setDateFilter] = useState("");
+    // =================================================
+    // STATE
+    // =================================================
+
+    const [
+        attendance,
+        setAttendance
+    ] = useState([]);
+
+    const [
+        loading,
+        setLoading
+    ] = useState(true);
+
+    const [
+        refreshing,
+        setRefreshing
+    ] = useState(false);
+
+    const [
+        search,
+        setSearch
+    ] = useState("");
+
+    const [
+        dateFilter,
+        setDateFilter
+    ] = useState("");
+
+    const [
+        errorMessage,
+        setErrorMessage
+    ] = useState("");
+
+    // =================================================
+    // FETCH ATTENDANCE
+    //
+    // IMPORTANT:
+    //
+    // We DO NOT use:
+    //
+    // /attendance/student/${user.user_id}
+    //
+    // because users.user_id and students.student_id
+    // are different IDs.
+    //
+    // Instead:
+    //
+    // /attendance/my
+    //
+    // Backend resolves:
+    //
+    // JWT user_id
+    //      ↓
+    // students.user_id
+    //      ↓
+    // students.student_id
+    // =================================================
+
+    const fetchAttendance = useCallback(
+        async (isRefresh = false) => {
+
+            try {
+
+                if (isRefresh) {
+                    setRefreshing(true);
+                } else {
+                    setLoading(true);
+                }
+
+                setErrorMessage("");
+
+
+                // =========================================
+                // TOKEN
+                // =========================================
+
+                const token =
+                    localStorage.getItem(
+                        "token"
+                    );
+
+
+                if (!token) {
+
+                    setAttendance([]);
+
+                    setErrorMessage(
+                        "Authentication token not found. Please login again."
+                    );
+
+                    return;
+                }
+
+
+                // =========================================
+                // API REQUEST
+                // =========================================
+
+                console.log(
+                    "Loading logged-in student attendance..."
+                );
+
+
+                const response =
+                    await fetch(
+                        `${API_URL}/attendance/my`,
+                        {
+                            method: "GET",
+
+                            headers: {
+                                Authorization:
+                                    `Bearer ${token}`,
+
+                                Accept:
+                                    "application/json",
+
+                                "Content-Type":
+                                    "application/json",
+                            },
+
+                            cache:
+                                "no-store",
+                        }
+                    );
+
+
+                // =========================================
+                // READ RESPONSE
+                // =========================================
+
+                let data = {};
+
+                const contentType =
+                    response.headers.get(
+                        "content-type"
+                    ) || "";
+
+
+                if (
+                    contentType.includes(
+                        "application/json"
+                    )
+                ) {
+
+                    try {
+
+                        data =
+                            await response.json();
+
+                    } catch {
+
+                        throw new Error(
+                            "Invalid response received from attendance server."
+                        );
+                    }
+
+                } else {
+
+                    const text =
+                        await response.text();
+
+                    data = {
+                        message:
+                            text ||
+                            `Server returned HTTP ${response.status}.`,
+                    };
+                }
+
+
+                console.log(
+                    "Student attendance response:",
+                    data
+                );
+
+
+                // =========================================
+                // AUTH ERROR
+                // =========================================
+
+                if (
+                    response.status === 401
+                ) {
+
+                    throw new Error(
+                        data?.message ||
+                        "Your login session has expired. Please login again."
+                    );
+                }
+
+
+                // =========================================
+                // FORBIDDEN
+                // =========================================
+
+                if (
+                    response.status === 403
+                ) {
+
+                    throw new Error(
+                        data?.message ||
+                        "You are not authorized to view attendance."
+                    );
+                }
+
+
+                // =========================================
+                // API NOT FOUND
+                // =========================================
+
+                if (
+                    response.status === 404
+                ) {
+
+                    throw new Error(
+                        data?.message ||
+                        "Student attendance API was not found. Please deploy the latest backend."
+                    );
+                }
+
+
+                // =========================================
+                // OTHER ERRORS
+                // =========================================
+
+                if (
+                    !response.ok
+                ) {
+
+                    throw new Error(
+                        data?.message ||
+                        `Failed to fetch attendance. HTTP ${response.status}.`
+                    );
+                }
+
+
+                // =========================================
+                // SUCCESS CHECK
+                // =========================================
+
+                if (
+                    data?.success === false
+                ) {
+
+                    throw new Error(
+                        data?.message ||
+                        "Attendance could not be loaded."
+                    );
+                }
+
+
+                // =========================================
+                // EXTRACT RECORDS
+                // =========================================
+
+                let records = [];
+
+
+                if (
+                    Array.isArray(
+                        data?.attendance
+                    )
+                ) {
+
+                    records =
+                        data.attendance;
+
+                } else if (
+                    Array.isArray(
+                        data?.records
+                    )
+                ) {
+
+                    records =
+                        data.records;
+
+                } else if (
+                    Array.isArray(
+                        data?.attendance_records
+                    )
+                ) {
+
+                    records =
+                        data.attendance_records;
+
+                } else if (
+                    Array.isArray(
+                        data?.data
+                    )
+                ) {
+
+                    records =
+                        data.data;
+                }
+
+
+                // =========================================
+                // SAVE RECORDS
+                // =========================================
+
+                setAttendance(
+                    records
+                );
+
+                setErrorMessage("");
+
+            } catch (
+                error
+            ) {
+
+                console.error(
+                    "Student attendance fetch error:",
+                    error
+                );
+
+
+                setAttendance([]);
+
+
+                setErrorMessage(
+                    error?.message ||
+                    "Failed to load attendance."
+                );
+
+            } finally {
+
+                setLoading(false);
+
+                setRefreshing(false);
+            }
+
+        },
+        []
+    );
+
 
     // =====================================================
-    // FETCH ATTENDANCE
+    // INITIAL LOAD
     // =====================================================
 
     useEffect(() => {
-        fetchAttendance();
-    }, []);
 
-    const fetchAttendance = async (isRefresh = false) => {
-        try {
-            if (isRefresh) {
-                setRefreshing(true);
-            } else {
-                setLoading(true);
-            }
+        fetchAttendance(false);
 
-            const token =
-                localStorage.getItem("token");
+    }, [
+        fetchAttendance
+    ]);
 
-            const user = JSON.parse(
-                localStorage.getItem("user") || "{}"
+
+    // =====================================================
+    // AUTO REFRESH
+    //
+    // This makes attendance appear shortly after QR scan.
+    // =====================================================
+
+    useEffect(() => {
+
+        const interval =
+            setInterval(() => {
+
+                fetchAttendance(true);
+
+            }, 5000);
+
+
+        return () => {
+
+            clearInterval(
+                interval
             );
 
-            if (!token) {
-                console.error(
-                    "Authentication token not found"
-                );
+        };
 
-                setAttendance([]);
-                return;
-            }
+    }, [
+        fetchAttendance
+    ]);
 
-            if (!user.user_id) {
-                console.error(
-                    "User ID not found"
-                );
 
-                setAttendance([]);
-                return;
-            }
+    // =====================================================
+    // REFRESH WHEN PAGE BECOMES VISIBLE
+    // =====================================================
 
-            const response = await fetch(
-                `${API_URL}/attendance/student/${user.user_id}`,
-                {
-                    method: "GET",
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        "Content-Type":
-                            "application/json",
-                    },
+    useEffect(() => {
+
+        const handleVisibility =
+            () => {
+
+                if (
+                    document.visibilityState ===
+                    "visible"
+                ) {
+
+                    fetchAttendance(true);
                 }
+            };
+
+
+        const handleFocus =
+            () => {
+
+                fetchAttendance(true);
+            };
+
+
+        document.addEventListener(
+            "visibilitychange",
+            handleVisibility
+        );
+
+        window.addEventListener(
+            "focus",
+            handleFocus
+        );
+
+
+        return () => {
+
+            document.removeEventListener(
+                "visibilitychange",
+                handleVisibility
             );
 
-            let data;
-
-            try {
-                data = await response.json();
-            } catch {
-                throw new Error(
-                    "Invalid response received from server."
-                );
-            }
-
-            console.log(
-                "Student attendance response:",
-                data
+            window.removeEventListener(
+                "focus",
+                handleFocus
             );
 
-            if (!response.ok) {
-                throw new Error(
-                    data.message ||
-                        "Failed to fetch attendance."
-                );
-            }
+        };
 
-            if (data.success) {
-                setAttendance(
-                    Array.isArray(data.attendance)
-                        ? data.attendance
-                        : []
-                );
-            } else {
-                console.error(
-                    "Attendance API error:",
-                    data.message
-                );
+    }, [
+        fetchAttendance
+    ]);
 
-                setAttendance([]);
-            }
-        } catch (error) {
-            console.error(
-                "Attendance fetch error:",
-                error
-            );
-
-            setAttendance([]);
-        } finally {
-            setLoading(false);
-            setRefreshing(false);
-        }
-    };
 
     // =====================================================
     // FILTERED ATTENDANCE
     // =====================================================
 
-    const filteredAttendance = useMemo(() => {
-        const searchValue =
-            search.trim().toLowerCase();
+    const filteredAttendance =
+        useMemo(() => {
 
-        return attendance.filter((item) => {
-            const subject =
-                String(
-                    item.subject_name || ""
-                ).toLowerCase();
+            const searchValue =
+                search
+                    .trim()
+                    .toLowerCase();
 
-            const subjectCode =
-                String(
-                    item.subject_code || ""
-                ).toLowerCase();
 
-            const staff =
-                String(
-                    item.staff_name || ""
-                ).toLowerCase();
+            return attendance.filter(
+                (item) => {
 
-            const status =
-                String(
-                    item.status || ""
-                ).toLowerCase();
-
-            const matchesSearch =
-                !searchValue ||
-                subject.includes(searchValue) ||
-                subjectCode.includes(searchValue) ||
-                staff.includes(searchValue) ||
-                status.includes(searchValue);
-
-            let matchesDate = true;
-
-            if (dateFilter) {
-                const attendanceDate =
-                    item.scanned_at
-                        ? new Date(item.scanned_at)
-                        : null;
-
-                if (
-                    attendanceDate &&
-                    !Number.isNaN(
-                        attendanceDate.getTime()
-                    )
-                ) {
-                    const year =
-                        attendanceDate.getFullYear();
-
-                    const month =
+                    const subject =
                         String(
-                            attendanceDate.getMonth() + 1
-                        ).padStart(2, "0");
+                            item.subject_name ||
+                            ""
+                        ).toLowerCase();
 
-                    const day =
+
+                    const subjectCode =
                         String(
-                            attendanceDate.getDate()
-                        ).padStart(2, "0");
+                            item.subject_code ||
+                            ""
+                        ).toLowerCase();
 
-                    const formattedDate =
-                        `${year}-${month}-${day}`;
 
-                    matchesDate =
-                        formattedDate ===
-                        dateFilter;
-                } else {
-                    matchesDate = false;
+                    const staff =
+                        String(
+                            item.staff_name ||
+                            ""
+                        ).toLowerCase();
+
+
+                    const status =
+                        String(
+                            item.status ||
+                            ""
+                        ).toLowerCase();
+
+
+                    const matchesSearch =
+                        !searchValue ||
+                        subject.includes(
+                            searchValue
+                        ) ||
+                        subjectCode.includes(
+                            searchValue
+                        ) ||
+                        staff.includes(
+                            searchValue
+                        ) ||
+                        status.includes(
+                            searchValue
+                        );
+
+
+                    let matchesDate =
+                        true;
+
+
+                    if (dateFilter) {
+
+                        const dateValue =
+                            item.scanned_at ||
+                            item.session_date ||
+                            item.attendance_date;
+
+
+                        const attendanceDate =
+                            dateValue
+                                ? new Date(
+                                      dateValue
+                                  )
+                                : null;
+
+
+                        if (
+                            attendanceDate &&
+                            !Number.isNaN(
+                                attendanceDate.getTime()
+                            )
+                        ) {
+
+                            const year =
+                                attendanceDate.getFullYear();
+
+
+                            const month =
+                                String(
+                                    attendanceDate.getMonth() +
+                                        1
+                                ).padStart(
+                                    2,
+                                    "0"
+                                );
+
+
+                            const day =
+                                String(
+                                    attendanceDate.getDate()
+                                ).padStart(
+                                    2,
+                                    "0"
+                                );
+
+
+                            const formattedDate =
+                                `${year}-${month}-${day}`;
+
+
+                            matchesDate =
+                                formattedDate ===
+                                dateFilter;
+
+                        } else {
+
+                            matchesDate =
+                                false;
+                        }
+                    }
+
+
+                    return (
+                        matchesSearch &&
+                        matchesDate
+                    );
                 }
-            }
-
-            return (
-                matchesSearch &&
-                matchesDate
             );
-        });
-    }, [
-        attendance,
-        search,
-        dateFilter,
-    ]);
+
+        }, [
+            attendance,
+            search,
+            dateFilter,
+        ]);
+
 
     // =====================================================
     // SUMMARY
     // =====================================================
 
-    const summary = useMemo(() => {
-        const present =
-            attendance.filter(
-                (item) =>
-                    String(
-                        item.status
-                    ).toUpperCase() === "PRESENT"
-            ).length;
+    const summary =
+        useMemo(() => {
 
-        const late =
-            attendance.filter(
-                (item) =>
-                    String(
-                        item.status
-                    ).toUpperCase() === "LATE"
-            ).length;
+            const present =
+                attendance.filter(
+                    (item) =>
+                        String(
+                            item.status
+                        ).toUpperCase() ===
+                        "PRESENT"
+                ).length;
 
-        const absent =
-            attendance.filter(
-                (item) =>
-                    String(
-                        item.status
-                    ).toUpperCase() === "ABSENT"
-            ).length;
 
-        const total =
-            attendance.length;
+            const late =
+                attendance.filter(
+                    (item) =>
+                        String(
+                            item.status
+                        ).toUpperCase() ===
+                        "LATE"
+                ).length;
 
-        const attended =
-            present + late;
 
-        const percentage =
-            total > 0
-                ? Math.round(
-                      (attended / total) * 100
-                  )
-                : 0;
+            const absent =
+                attendance.filter(
+                    (item) =>
+                        String(
+                            item.status
+                        ).toUpperCase() ===
+                        "ABSENT"
+                ).length;
 
-        return {
-            present,
-            late,
-            absent,
-            total,
-            attended,
-            percentage,
-        };
-    }, [attendance]);
+
+            const total =
+                attendance.length;
+
+
+            const attended =
+                present +
+                late;
+
+
+            const percentage =
+                total > 0
+                    ? Math.round(
+                          (attended /
+                              total) *
+                              100
+                      )
+                    : 0;
+
+
+            return {
+                present,
+                late,
+                absent,
+                total,
+                attended,
+                percentage,
+            };
+
+        }, [
+            attendance
+        ]);
+
 
     // =====================================================
     // PIE DATA
@@ -290,8 +706,10 @@ function StudentAttendance() {
             value: summary.absent,
         },
     ].filter(
-        (item) => item.value > 0
+        (item) =>
+            item.value > 0
     );
+
 
     const COLORS = [
         "#22c55e",
@@ -299,144 +717,232 @@ function StudentAttendance() {
         "#ef4444",
     ];
 
+
     // =====================================================
     // SUBJECT DATA
     // =====================================================
 
-    const subjectData = useMemo(() => {
-        const subjects = {};
+    const subjectData =
+        useMemo(() => {
 
-        attendance.forEach((item) => {
-            const subject =
-                item.subject_name ||
-                item.subject_code ||
-                "Unknown";
+            const subjects = {};
 
-            if (!subjects[subject]) {
-                subjects[subject] = {
-                    subject,
-                    subjectCode:
-                        item.subject_code || "",
-                    present: 0,
-                    late: 0,
-                    absent: 0,
-                    total: 0,
-                };
-            }
 
-            subjects[subject].total += 1;
+            attendance.forEach(
+                (item) => {
 
-            const status =
-                String(
-                    item.status
-                ).toUpperCase();
+                    const subject =
+                        item.subject_name ||
+                        item.subject_code ||
+                        "Unknown";
 
-            if (status === "PRESENT") {
-                subjects[subject].present += 1;
-            } else if (status === "LATE") {
-                subjects[subject].late += 1;
-            } else if (status === "ABSENT") {
-                subjects[subject].absent += 1;
-            }
-        });
 
-        return Object.values(
-            subjects
-        ).map((item) => ({
-            ...item,
-            percentage:
-                item.total > 0
-                    ? Math.round(
-                          ((item.present +
-                              item.late) /
-                              item.total) *
-                              100
-                      )
-                    : 0,
-        }));
-    }, [attendance]);
+                    if (
+                        !subjects[subject]
+                    ) {
+
+                        subjects[subject] = {
+
+                            subject,
+
+                            subjectCode:
+                                item.subject_code ||
+                                "",
+
+                            present: 0,
+
+                            late: 0,
+
+                            absent: 0,
+
+                            total: 0,
+                        };
+                    }
+
+
+                    subjects[
+                        subject
+                    ].total += 1;
+
+
+                    const status =
+                        String(
+                            item.status
+                        ).toUpperCase();
+
+
+                    if (
+                        status ===
+                        "PRESENT"
+                    ) {
+
+                        subjects[
+                            subject
+                        ].present += 1;
+
+                    } else if (
+                        status ===
+                        "LATE"
+                    ) {
+
+                        subjects[
+                            subject
+                        ].late += 1;
+
+                    } else if (
+                        status ===
+                        "ABSENT"
+                    ) {
+
+                        subjects[
+                            subject
+                        ].absent += 1;
+                    }
+                }
+            );
+
+
+            return Object.values(
+                subjects
+            ).map(
+                (item) => ({
+
+                    ...item,
+
+                    percentage:
+                        item.total > 0
+                            ? Math.round(
+                                  ((item.present +
+                                      item.late) /
+                                      item.total) *
+                                      100
+                              )
+                            : 0,
+
+                })
+            );
+
+        }, [
+            attendance
+        ]);
+
 
     // =====================================================
     // DATE FORMAT
     // =====================================================
 
-    const formatDateTime = (value) => {
-        if (!value) {
-            return "-";
-        }
+    const formatDateTime =
+        (value) => {
 
-        const date =
-            new Date(value);
-
-        if (
-            Number.isNaN(
-                date.getTime()
-            )
-        ) {
-            return value;
-        }
-
-        return date.toLocaleString(
-            "en-IN",
-            {
-                dateStyle: "medium",
-                timeStyle: "short",
+            if (!value) {
+                return "-";
             }
-        );
-    };
+
+
+            const date =
+                new Date(value);
+
+
+            if (
+                Number.isNaN(
+                    date.getTime()
+                )
+            ) {
+
+                return value;
+            }
+
+
+            return date.toLocaleString(
+                "en-IN",
+                {
+                    dateStyle:
+                        "medium",
+
+                    timeStyle:
+                        "short",
+                }
+            );
+        };
+
 
     // =====================================================
     // STATUS BADGE
     // =====================================================
 
-    const getStatusClass = (
-        status
-    ) => {
-        const value =
-            String(
-                status || ""
-            ).toUpperCase();
+    const getStatusClass =
+        (status) => {
 
-        if (value === "PRESENT") {
-            return "bg-green-100 text-green-700";
-        }
+            const value =
+                String(
+                    status || ""
+                ).toUpperCase();
 
-        if (value === "LATE") {
-            return "bg-yellow-100 text-yellow-700";
-        }
 
-        if (value === "ABSENT") {
-            return "bg-red-100 text-red-700";
-        }
+            if (
+                value ===
+                "PRESENT"
+            ) {
 
-        return "bg-slate-100 text-slate-600";
-    };
+                return "bg-green-100 text-green-700";
+            }
+
+
+            if (
+                value ===
+                "LATE"
+            ) {
+
+                return "bg-yellow-100 text-yellow-700";
+            }
+
+
+            if (
+                value ===
+                "ABSENT"
+            ) {
+
+                return "bg-red-100 text-red-700";
+            }
+
+
+            return "bg-slate-100 text-slate-600";
+        };
+
 
     // =====================================================
     // LOADING
     // =====================================================
 
     if (loading) {
+
         return (
+
             <div className="flex min-h-96 items-center justify-center">
+
                 <div className="text-center">
 
                     <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-indigo-600"></div>
 
                     <p className="text-slate-500">
+
                         Loading attendance...
+
                     </p>
 
                 </div>
+
             </div>
         );
     }
+
 
     // =====================================================
     // UI
     // =====================================================
 
     return (
+
         <div className="space-y-6">
 
             {/* =================================================
@@ -450,32 +956,46 @@ function StudentAttendance() {
                     <div className="mb-2 flex items-center gap-2">
 
                         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600">
+
                             <FaChartPie />
+
                         </div>
 
+
                         <span className="text-sm font-semibold text-indigo-600">
+
                             Attendance
+
                         </span>
 
                     </div>
 
+
                     <h1 className="text-3xl font-bold text-slate-800">
+
                         My Attendance
+
                     </h1>
 
+
                     <p className="mt-2 text-slate-500">
+
                         Track your attendance performance
                         and subject-wise records.
+
                     </p>
 
                 </div>
+
 
                 <button
                     type="button"
                     onClick={() =>
                         fetchAttendance(true)
                     }
-                    disabled={refreshing}
+                    disabled={
+                        refreshing
+                    }
                     className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                 >
 
@@ -487,6 +1007,7 @@ function StudentAttendance() {
                         }
                     />
 
+
                     {refreshing
                         ? "Refreshing..."
                         : "Refresh"}
@@ -495,102 +1016,182 @@ function StudentAttendance() {
 
             </div>
 
+
+            {/* =================================================
+                ERROR
+            ================================================= */}
+
+            {errorMessage && (
+
+                <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-5">
+
+                    <div className="mt-0.5 text-red-600">
+
+                        <FaExclamationTriangle />
+
+                    </div>
+
+
+                    <div className="flex-1">
+
+                        <p className="font-semibold text-red-800">
+
+                            Attendance Error
+
+                        </p>
+
+
+                        <p className="mt-1 text-sm text-red-700">
+
+                            {errorMessage}
+
+                        </p>
+
+                    </div>
+
+                </div>
+            )}
+
+
             {/* =================================================
                 SUMMARY CARDS
             ================================================= */}
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
 
-                {/* Total */}
+                {/* TOTAL */}
 
                 <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
 
                     <div className="flex items-center justify-between">
 
                         <div>
+
                             <p className="text-sm font-medium text-slate-500">
+
                                 Total Classes
+
                             </p>
+
 
                             <h2 className="mt-2 text-3xl font-bold text-slate-800">
+
                                 {summary.total}
+
                             </h2>
+
                         </div>
 
+
                         <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600">
+
                             <FaBook />
+
                         </div>
 
                     </div>
 
                 </div>
 
-                {/* Present */}
+
+                {/* PRESENT */}
 
                 <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
 
                     <div className="flex items-center justify-between">
 
                         <div>
+
                             <p className="text-sm font-medium text-slate-500">
+
                                 Present
+
                             </p>
+
 
                             <h2 className="mt-2 text-3xl font-bold text-green-600">
+
                                 {summary.present}
+
                             </h2>
+
                         </div>
+
 
                         <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-green-100 text-green-600">
+
                             <FaCheckCircle />
+
                         </div>
 
                     </div>
 
                 </div>
 
-                {/* Late */}
+
+                {/* LATE */}
 
                 <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
 
                     <div className="flex items-center justify-between">
 
                         <div>
+
                             <p className="text-sm font-medium text-slate-500">
+
                                 Late
+
                             </p>
+
 
                             <h2 className="mt-2 text-3xl font-bold text-yellow-600">
+
                                 {summary.late}
+
                             </h2>
+
                         </div>
 
+
                         <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-yellow-100 text-yellow-600">
+
                             <FaClock />
+
                         </div>
 
                     </div>
 
                 </div>
 
-                {/* Percentage */}
+
+                {/* PERCENTAGE */}
 
                 <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
 
                     <div className="flex items-center justify-between">
 
                         <div>
+
                             <p className="text-sm font-medium text-slate-500">
+
                                 Attendance
+
                             </p>
 
+
                             <h2 className="mt-2 text-3xl font-bold text-indigo-600">
+
                                 {summary.percentage}%
+
                             </h2>
+
                         </div>
 
+
                         <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600">
+
                             <FaChartPie />
+
                         </div>
 
                     </div>
@@ -599,28 +1200,38 @@ function StudentAttendance() {
 
             </div>
 
+
             {/* =================================================
                 LOW ATTENDANCE WARNING
             ================================================= */}
 
             {summary.total > 0 &&
                 summary.percentage < 75 && (
+
                     <div className="flex items-start gap-3 rounded-2xl border border-yellow-200 bg-yellow-50 p-5">
 
                         <div className="mt-0.5 text-yellow-600">
+
                             <FaExclamationTriangle />
+
                         </div>
+
 
                         <div>
 
                             <p className="font-semibold text-yellow-800">
+
                                 Attendance Warning
+
                             </p>
 
+
                             <p className="mt-1 text-sm text-yellow-700">
+
                                 Your attendance is below
                                 75%. Try to attend your
                                 upcoming classes regularly.
+
                             </p>
 
                         </div>
@@ -628,40 +1239,53 @@ function StudentAttendance() {
                     </div>
                 )}
 
+
             {/* =================================================
                 CHARTS
             ================================================= */}
 
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
 
-                {/* Pie */}
+                {/* PIE */}
 
                 <div className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
 
                     <div className="mb-4">
 
                         <h2 className="text-lg font-semibold text-slate-800">
+
                             Attendance Overview
+
                         </h2>
 
+
                         <p className="text-sm text-slate-500">
+
                             Present, late and absent
                             distribution
+
                         </p>
 
                     </div>
 
+
                     {pieData.length === 0 ? (
+
                         <div className="flex h-72 items-center justify-center text-slate-500">
+
                             No attendance data available
+
                         </div>
+
                     ) : (
+
                         <div className="h-72">
 
                             <ResponsiveContainer
                                 width="100%"
                                 height="100%"
                             >
+
                                 <PieChart>
 
                                     <Pie
@@ -679,6 +1303,7 @@ function StudentAttendance() {
                                                 entry,
                                                 index
                                             ) => (
+
                                                 <Cell
                                                     key={`cell-${index}`}
                                                     fill={
@@ -687,16 +1312,19 @@ function StudentAttendance() {
                                                         ]
                                                     }
                                                 />
+
                                             )
                                         )}
 
                                     </Pie>
+
 
                                     <Tooltip />
 
                                     <Legend />
 
                                 </PieChart>
+
                             </ResponsiveContainer>
 
                         </div>
@@ -704,40 +1332,48 @@ function StudentAttendance() {
 
                 </div>
 
-                {/* Percentage */}
+
+                {/* PERCENTAGE */}
 
                 <div className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
 
                     <div className="mb-4">
 
                         <h2 className="text-lg font-semibold text-slate-800">
+
                             Overall Attendance
+
                         </h2>
 
+
                         <p className="text-sm text-slate-500">
+
                             Your current attendance percentage
+
                         </p>
 
                     </div>
+
 
                     <div className="flex h-72 flex-col items-center justify-center">
 
                         <div
                             className="relative flex h-48 w-48 items-center justify-center rounded-full"
                             style={{
-                                background: `conic-gradient(
-                                    ${
-                                        summary.percentage >=
-                                        75
-                                            ? "#22c55e"
-                                            : "#ef4444"
-                                    } ${
-                                        summary.percentage
-                                    }%,
-                                    #e2e8f0 ${
-                                        summary.percentage
-                                    }% 100%
-                                )`,
+                                background:
+                                    `conic-gradient(
+                                        ${
+                                            summary.percentage >=
+                                            75
+                                                ? "#22c55e"
+                                                : "#ef4444"
+                                        } ${
+                                            summary.percentage
+                                        }%,
+                                        #e2e8f0 ${
+                                            summary.percentage
+                                        }% 100%
+                                    )`,
                             }}
                         >
 
@@ -746,11 +1382,16 @@ function StudentAttendance() {
                                 <div className="text-center">
 
                                     <p className="text-4xl font-bold text-slate-800">
+
                                         {summary.percentage}%
+
                                     </p>
 
+
                                     <p className="mt-1 text-sm text-slate-500">
+
                                         Attendance
+
                                     </p>
 
                                 </div>
@@ -758,6 +1399,7 @@ function StudentAttendance() {
                             </div>
 
                         </div>
+
 
                         <p
                             className={`mt-5 text-sm font-semibold ${
@@ -767,10 +1409,12 @@ function StudentAttendance() {
                                     : "text-red-600"
                             }`}
                         >
+
                             {summary.percentage >=
                             75
                                 ? "Good attendance"
                                 : "Attendance below 75%"}
+
                         </p>
 
                     </div>
@@ -778,6 +1422,7 @@ function StudentAttendance() {
                 </div>
 
             </div>
+
 
             {/* =================================================
                 SUBJECT-WISE
@@ -788,26 +1433,38 @@ function StudentAttendance() {
                 <div className="mb-5">
 
                     <h2 className="text-lg font-semibold text-slate-800">
+
                         Subject-wise Attendance
+
                     </h2>
 
+
                     <p className="text-sm text-slate-500">
+
                         Attendance percentage for each subject
+
                     </p>
 
                 </div>
 
+
                 {subjectData.length === 0 ? (
+
                     <div className="flex h-72 items-center justify-center text-slate-500">
+
                         No subject attendance data available
+
                     </div>
+
                 ) : (
+
                     <div className="h-80">
 
                         <ResponsiveContainer
                             width="100%"
                             height="100%"
                         >
+
                             <BarChart
                                 data={subjectData}
                                 margin={{
@@ -822,12 +1479,14 @@ function StudentAttendance() {
                                     strokeDasharray="3 3"
                                 />
 
+
                                 <XAxis
                                     dataKey="subject"
                                     angle={-25}
                                     textAnchor="end"
                                     interval={0}
                                 />
+
 
                                 <YAxis
                                     domain={[
@@ -837,6 +1496,7 @@ function StudentAttendance() {
                                     unit="%"
                                 />
 
+
                                 <Tooltip
                                     formatter={(
                                         value
@@ -845,6 +1505,7 @@ function StudentAttendance() {
                                         "Attendance",
                                     ]}
                                 />
+
 
                                 <Bar
                                     dataKey="percentage"
@@ -858,6 +1519,7 @@ function StudentAttendance() {
                                 />
 
                             </BarChart>
+
                         </ResponsiveContainer>
 
                     </div>
@@ -865,24 +1527,32 @@ function StudentAttendance() {
 
             </div>
 
+
             {/* =================================================
                 SUBJECT SUMMARY
             ================================================= */}
 
             {subjectData.length > 0 && (
+
                 <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
 
                     <div className="border-b p-5">
 
                         <h2 className="text-lg font-semibold text-slate-800">
+
                             Subject Summary
+
                         </h2>
 
+
                         <p className="mt-1 text-sm text-slate-500">
+
                             Detailed attendance by subject
+
                         </p>
 
                     </div>
+
 
                     <div className="overflow-x-auto">
 
@@ -893,37 +1563,56 @@ function StudentAttendance() {
                                 <tr>
 
                                     <th className="p-4 text-left text-sm font-semibold text-slate-600">
+
                                         Subject
+
                                     </th>
 
+
                                     <th className="p-4 text-center text-sm font-semibold text-slate-600">
+
                                         Present
+
                                     </th>
 
+
                                     <th className="p-4 text-center text-sm font-semibold text-slate-600">
+
                                         Late
+
                                     </th>
 
+
                                     <th className="p-4 text-center text-sm font-semibold text-slate-600">
+
                                         Absent
+
                                     </th>
 
+
                                     <th className="p-4 text-center text-sm font-semibold text-slate-600">
+
                                         Total
+
                                     </th>
 
+
                                     <th className="p-4 text-center text-sm font-semibold text-slate-600">
+
                                         Percentage
+
                                     </th>
 
                                 </tr>
 
                             </thead>
 
+
                             <tbody>
 
                                 {subjectData.map(
                                     (subject) => (
+
                                         <tr
                                             key={
                                                 subject.subject
@@ -934,44 +1623,64 @@ function StudentAttendance() {
                                             <td className="p-4">
 
                                                 <p className="font-medium text-slate-800">
+
                                                     {
                                                         subject.subject
                                                     }
+
                                                 </p>
 
+
                                                 {subject.subjectCode && (
+
                                                     <p className="mt-1 text-xs text-slate-400">
+
                                                         {
                                                             subject.subjectCode
                                                         }
+
                                                     </p>
+
                                                 )}
 
                                             </td>
 
+
                                             <td className="p-4 text-center font-semibold text-green-600">
+
                                                 {
                                                     subject.present
                                                 }
+
                                             </td>
 
+
                                             <td className="p-4 text-center font-semibold text-yellow-600">
+
                                                 {
                                                     subject.late
                                                 }
+
                                             </td>
 
+
                                             <td className="p-4 text-center font-semibold text-red-600">
+
                                                 {
                                                     subject.absent
                                                 }
+
                                             </td>
 
+
                                             <td className="p-4 text-center font-semibold text-slate-700">
+
                                                 {
                                                     subject.total
                                                 }
+
                                             </td>
+
 
                                             <td className="p-4 text-center">
 
@@ -983,14 +1692,17 @@ function StudentAttendance() {
                                                             : "bg-red-100 text-red-700"
                                                     }`}
                                                 >
+
                                                     {
                                                         subject.percentage
                                                     }%
+
                                                 </span>
 
                                             </td>
 
                                         </tr>
+
                                     )
                                 )}
 
@@ -1002,6 +1714,7 @@ function StudentAttendance() {
 
                 </div>
             )}
+
 
             {/* =================================================
                 ATTENDANCE RECORDS
@@ -1016,32 +1729,44 @@ function StudentAttendance() {
                         <div>
 
                             <h2 className="text-lg font-semibold text-slate-800">
+
                                 Attendance Records
+
                             </h2>
 
+
                             <p className="mt-1 text-sm text-slate-500">
+
                                 Complete attendance history
+
                             </p>
 
                         </div>
 
+
                         <div className="text-sm font-medium text-slate-500">
-                            {filteredAttendance.length} record
+
+                            {filteredAttendance.length}
+                            {" "}
+                            record
                             {filteredAttendance.length !==
                             1
                                 ? "s"
                                 : ""}
+
                         </div>
 
                     </div>
 
-                    {/* Filters */}
+
+                    {/* FILTERS */}
 
                     <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2">
 
                         <div className="relative">
 
                             <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+
 
                             <input
                                 type="text"
@@ -1057,9 +1782,11 @@ function StudentAttendance() {
 
                         </div>
 
+
                         <div className="relative">
 
                             <FaCalendarAlt className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+
 
                             <input
                                 type="date"
@@ -1078,6 +1805,7 @@ function StudentAttendance() {
 
                 </div>
 
+
                 <div className="overflow-x-auto">
 
                     <table className="w-full">
@@ -1087,29 +1815,42 @@ function StudentAttendance() {
                             <tr>
 
                                 <th className="p-4 text-left text-sm font-semibold text-slate-600">
+
                                     Subject
+
                                 </th>
 
+
                                 <th className="p-4 text-left text-sm font-semibold text-slate-600">
+
                                     Staff
+
                                 </th>
 
+
                                 <th className="p-4 text-left text-sm font-semibold text-slate-600">
+
                                     Date & Time
+
                                 </th>
 
+
                                 <th className="p-4 text-left text-sm font-semibold text-slate-600">
+
                                     Status
+
                                 </th>
 
                             </tr>
 
                         </thead>
 
+
                         <tbody>
 
                             {filteredAttendance.length ===
                             0 ? (
+
                                 <tr>
 
                                     <td
@@ -1118,24 +1859,35 @@ function StudentAttendance() {
                                     >
 
                                         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+
                                             <FaBook />
+
                                         </div>
 
+
                                         <p className="mt-4 font-medium text-slate-600">
+
                                             No attendance records found
+
                                         </p>
 
+
                                         <p className="mt-1 text-sm text-slate-400">
+
                                             Try changing your search
                                             or date filter.
+
                                         </p>
 
                                     </td>
 
                                 </tr>
+
                             ) : (
+
                                 filteredAttendance.map(
                                     (item) => (
+
                                         <tr
                                             key={
                                                 item.attendance_id
@@ -1146,30 +1898,44 @@ function StudentAttendance() {
                                             <td className="p-4">
 
                                                 <p className="font-medium text-slate-800">
+
                                                     {item.subject_name ||
                                                         "-"}
+
                                                 </p>
 
+
                                                 {item.subject_code && (
+
                                                     <p className="mt-1 text-xs text-slate-400">
+
                                                         {
                                                             item.subject_code
                                                         }
+
                                                     </p>
+
                                                 )}
 
                                             </td>
 
+
                                             <td className="p-4 text-slate-600">
+
                                                 {item.staff_name ||
                                                     "-"}
+
                                             </td>
 
+
                                             <td className="p-4 text-sm text-slate-600">
+
                                                 {formatDateTime(
                                                     item.scanned_at
                                                 )}
+
                                             </td>
+
 
                                             <td className="p-4">
 
@@ -1184,24 +1950,33 @@ function StudentAttendance() {
                                                             ""
                                                     ).toUpperCase() ===
                                                     "PRESENT" && (
+
                                                         <FaCheckCircle />
+
                                                     )}
+
 
                                                     {String(
                                                         item.status ||
                                                             ""
                                                     ).toUpperCase() ===
                                                     "LATE" && (
+
                                                         <FaClock />
+
                                                     )}
+
 
                                                     {String(
                                                         item.status ||
                                                             ""
                                                     ).toUpperCase() ===
                                                     "ABSENT" && (
+
                                                         <FaExclamationTriangle />
+
                                                     )}
+
 
                                                     {String(
                                                         item.status ||
@@ -1213,8 +1988,10 @@ function StudentAttendance() {
                                             </td>
 
                                         </tr>
+
                                     )
                                 )
+
                             )}
 
                         </tbody>
@@ -1228,5 +2005,6 @@ function StudentAttendance() {
         </div>
     );
 }
+
 
 export default StudentAttendance;

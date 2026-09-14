@@ -19,7 +19,6 @@ import {
 
 import { Html5Qrcode } from "html5-qrcode";
 
-
 // =====================================================
 // API
 // =====================================================
@@ -27,12 +26,21 @@ import { Html5Qrcode } from "html5-qrcode";
 const API_URL =
     "https://attendance-management-system-gpci.onrender.com/api";
 
+const SCAN_URL =
+    `${API_URL}/attendance/scan`;
+
+const REQUEST_TIMEOUT =
+    15000;
 
 // =====================================================
 // COMPONENT
 // =====================================================
 
 function StudentScanQR() {
+
+    // =================================================
+    // REFS
+    // =================================================
 
     const scannerRef =
         useRef(null);
@@ -46,6 +54,13 @@ function StudentScanQR() {
     const mountedRef =
         useRef(true);
 
+    const requestAbortRef =
+        useRef(null);
+
+
+    // =================================================
+    // STATE
+    // =================================================
 
     const [
         scanning,
@@ -71,6 +86,23 @@ function StudentScanQR() {
         attendance,
         setAttendance
     ] = useState(null);
+
+
+    // =====================================================
+    // GET AUTH TOKEN
+    // =====================================================
+
+    const getAuthToken = () => {
+
+        const token =
+            localStorage.getItem("token");
+
+        if (!token) {
+            return null;
+        }
+
+        return token.trim();
+    };
 
 
     // =====================================================
@@ -102,7 +134,6 @@ function StudentScanQR() {
                         );
                     }
                 }
-
 
                 try {
 
@@ -145,36 +176,41 @@ function StudentScanQR() {
     // =====================================================
     // EXTRACT QR TOKEN
     //
-    // Teacher QR contains JSON:
+    // Teacher QR normally contains JSON:
     //
     // {
-    //   session_id: ...,
+    //   session_id: 1,
     //   qr_token: "...",
-    //   allocation_id: ...,
-    //   subject_id: ...,
-    //   staff_id: ...,
-    //   class_id: ...
+    //   allocation_id: 1,
+    //   subject_id: 1,
+    //   staff_id: 1,
+    //   class_id: 1
     // }
     //
-    // We MUST send only qr_token to backend.
+    // Backend only needs qr_token.
     // =====================================================
 
-    const extractQRToken = (decodedText) => {
+    const extractQRToken = (
+        decodedText
+    ) => {
 
         if (
-            !decodedText ||
-            !String(decodedText).trim()
+            decodedText === null ||
+            decodedText === undefined
         ) {
             return null;
         }
 
-
         const rawValue =
             String(decodedText).trim();
 
+        if (!rawValue) {
+            return null;
+        }
+
 
         // -------------------------------------------------
-        // First try JSON QR
+        // JSON QR
         // -------------------------------------------------
 
         try {
@@ -182,33 +218,78 @@ function StudentScanQR() {
             const parsed =
                 JSON.parse(rawValue);
 
-
             if (
                 parsed &&
-                typeof parsed === "object" &&
-                parsed.qr_token
+                typeof parsed === "object"
             ) {
 
-                return String(
-                    parsed.qr_token
-                ).trim();
+                const token =
+                    parsed.qr_token ??
+                    parsed.qrToken ??
+                    parsed.token;
+
+                if (
+                    token !== null &&
+                    token !== undefined
+                ) {
+
+                    const extracted =
+                        String(token).trim();
+
+                    if (extracted) {
+                        return extracted;
+                    }
+                }
             }
 
-
-        } catch (error) {
-
+        } catch {
             // Not JSON.
-            // It may already be a raw QR token.
+            // Continue as raw token.
         }
 
 
         // -------------------------------------------------
-        // Fallback:
-        // If QR itself contains only the token,
-        // accept it directly.
+        // RAW TOKEN QR
         // -------------------------------------------------
 
         return rawValue;
+    };
+
+
+    // =====================================================
+    // READ ERROR RESPONSE
+    // =====================================================
+
+    const getResponseMessage = (
+        data,
+        fallback
+    ) => {
+
+        if (
+            data &&
+            typeof data === "object"
+        ) {
+
+            if (
+                typeof data.message ===
+                "string" &&
+                data.message.trim()
+            ) {
+
+                return data.message.trim();
+            }
+
+            if (
+                typeof data.error ===
+                "string" &&
+                data.error.trim()
+            ) {
+
+                return data.error.trim();
+            }
+        }
+
+        return fallback;
     };
 
 
@@ -217,7 +298,19 @@ function StudentScanQR() {
     // =====================================================
 
     const processQRCode =
-        async (decodedText) => {
+        async (
+            decodedText
+        ) => {
+
+            // -------------------------------------------------
+            // Prevent duplicate processing
+            // -------------------------------------------------
+
+            if (
+                processingRef.current
+            ) {
+                return;
+            }
 
             if (
                 !decodedText ||
@@ -227,34 +320,29 @@ function StudentScanQR() {
             }
 
 
-            if (
-                processingRef.current
-            ) {
-                return;
-            }
-
-
             processingRef.current =
                 true;
 
 
+            if (
+                mountedRef.current
+            ) {
+
+                setProcessing(true);
+
+                setErrorMessage("");
+
+                setSuccessMessage("");
+
+                setAttendance(null);
+            }
+
+
             try {
 
-                if (
-                    mountedRef.current
-                ) {
-
-                    setProcessing(true);
-
-                    setErrorMessage("");
-
-                    setSuccessMessage("");
-                }
-
-
-                // -----------------------------------------
-                // EXTRACT ACTUAL QR TOKEN
-                // -----------------------------------------
+                // =============================================
+                // EXTRACT QR TOKEN
+                // =============================================
 
                 const qrToken =
                     extractQRToken(
@@ -262,12 +350,10 @@ function StudentScanQR() {
                     );
 
 
-                if (
-                    !qrToken
-                ) {
+                if (!qrToken) {
 
                     throw new Error(
-                        "Invalid QR code. Please scan the QR code currently displayed by your teacher."
+                        "Invalid QR code. Please scan the latest QR code displayed by your teacher."
                     );
                 }
 
@@ -277,21 +363,12 @@ function StudentScanQR() {
                 );
 
 
-                // -----------------------------------------
-                // STOP CAMERA
-                // -----------------------------------------
-
-                await stopScanner();
-
-
-                // -----------------------------------------
+                // =============================================
                 // AUTH TOKEN
-                // -----------------------------------------
+                // =============================================
 
                 const token =
-                    localStorage.getItem(
-                        "token"
-                    );
+                    getAuthToken();
 
 
                 if (!token) {
@@ -302,76 +379,283 @@ function StudentScanQR() {
                 }
 
 
-                // -----------------------------------------
-                // SEND ONLY QR TOKEN
-                //
-                // student_id is intentionally NOT sent.
-                //
-                // Backend identifies the student using
-                // the authenticated JWT user.
-                // -----------------------------------------
+                // =============================================
+                // STOP CAMERA
+                // =============================================
 
-                const response =
-                    await fetch(
-                        `${API_URL}/attendance/scan`,
-                        {
-                            method: "POST",
+                await stopScanner();
 
-                            headers: {
-                                "Content-Type":
-                                    "application/json",
 
-                                Authorization:
-                                    `Bearer ${token}`,
-                            },
+                // =============================================
+                // CANCEL OLD REQUEST
+                // =============================================
 
-                            body:
-                                JSON.stringify({
-                                    qr_token:
-                                        qrToken,
-                                }),
-                        }
+                if (
+                    requestAbortRef.current
+                ) {
+
+                    try {
+
+                        requestAbortRef.current.abort();
+
+                    } catch {
+                        // Ignore
+                    }
+                }
+
+
+                // =============================================
+                // NEW ABORT CONTROLLER
+                // =============================================
+
+                const controller =
+                    new AbortController();
+
+                requestAbortRef.current =
+                    controller;
+
+
+                const timeoutId =
+                    setTimeout(
+                        () => {
+
+                            controller.abort();
+
+                        },
+                        REQUEST_TIMEOUT
                     );
+
+
+                // =============================================
+                // DEBUG
+                // =============================================
+
+                console.log(
+                    "Sending attendance scan request:",
+                    {
+                        url: SCAN_URL,
+                        method: "POST",
+                        hasToken: Boolean(token),
+                        hasQRToken: Boolean(qrToken),
+                    }
+                );
+
+
+                // =============================================
+                // SEND REQUEST
+                //
+                // IMPORTANT:
+                // Do NOT send student_id.
+                //
+                // Backend gets student from:
+                //
+                // JWT user_id
+                //       ↓
+                // students.user_id
+                //       ↓
+                // students.student_id
+                // =============================================
+
+                let response;
+
+                try {
+
+                    response =
+                        await fetch(
+                            SCAN_URL,
+                            {
+                                method: "POST",
+
+                                headers: {
+                                    "Content-Type":
+                                        "application/json",
+
+                                    Accept:
+                                        "application/json",
+
+                                    Authorization:
+                                        `Bearer ${token}`,
+                                },
+
+                                body:
+                                    JSON.stringify({
+                                        qr_token:
+                                            qrToken,
+                                    }),
+
+                                signal:
+                                    controller.signal,
+
+                                cache:
+                                    "no-store",
+                            }
+                        );
+
+                } catch (
+                    networkError
+                ) {
+
+                    clearTimeout(
+                        timeoutId
+                    );
+
+
+                    console.error(
+                        "Attendance network error:",
+                        networkError
+                    );
+
+
+                    if (
+                        networkError?.name ===
+                        "AbortError"
+                    ) {
+
+                        throw new Error(
+                            "Attendance server did not respond within 15 seconds. Please check the internet connection and try again."
+                        );
+                    }
+
+
+                    throw new Error(
+                        "Unable to connect to the attendance server. Please check your internet connection and try again."
+                    );
+                }
+
+
+                clearTimeout(
+                    timeoutId
+                );
+
+
+                // =============================================
+                // READ RESPONSE
+                // =============================================
+
+                const contentType =
+                    response.headers.get(
+                        "content-type"
+                    ) || "";
 
 
                 let data = {};
 
 
-                try {
+                if (
+                    contentType.includes(
+                        "application/json"
+                    )
+                ) {
 
-                    data =
-                        await response.json();
+                    try {
 
-                } catch (error) {
+                        data =
+                            await response.json();
 
-                    console.error(
-                        "Invalid JSON response:",
-                        error
-                    );
+                    } catch (
+                        jsonError
+                    ) {
 
-                    throw new Error(
-                        "Invalid response received from server."
-                    );
+                        console.error(
+                            "JSON response error:",
+                            jsonError
+                        );
+
+                        throw new Error(
+                            `Server returned an invalid response (HTTP ${response.status}).`
+                        );
+                    }
+
+                } else {
+
+                    const text =
+                        await response.text();
+
+                    data = {
+                        message:
+                            text ||
+                            `Server returned HTTP ${response.status}.`,
+                    };
                 }
 
 
                 console.log(
                     "Attendance scan response:",
-                    data
+                    {
+                        status:
+                            response.status,
+                        ok:
+                            response.ok,
+                        data,
+                    }
                 );
 
 
-                // =================================================
+                // =============================================
+                // 401
+                // =============================================
+
+                if (
+                    response.status === 401
+                ) {
+
+                    throw new Error(
+                        getResponseMessage(
+                            data,
+                            "Your login session has expired. Please login again."
+                        )
+                    );
+                }
+
+
+                // =============================================
+                // 403
+                // =============================================
+
+                if (
+                    response.status === 403
+                ) {
+
+                    throw new Error(
+                        getResponseMessage(
+                            data,
+                            "You are not authorized to mark attendance."
+                        )
+                    );
+                }
+
+
+                // =============================================
+                // 404
+                // =============================================
+
+                if (
+                    response.status === 404
+                ) {
+
+                    throw new Error(
+                        getResponseMessage(
+                            data,
+                            "Attendance scan API was not found on the server. Please make sure the latest backend is deployed."
+                        )
+                    );
+                }
+
+
+                // =============================================
+                // 409
                 // ALREADY MARKED
-                // =================================================
+                // =============================================
 
                 if (
                     response.status === 409
                 ) {
 
                     const message =
-                        data?.message ||
-                        "Attendance is already marked for this session.";
+                        getResponseMessage(
+                            data,
+                            "Attendance is already marked for this session."
+                        );
 
 
                     if (
@@ -379,6 +663,8 @@ function StudentScanQR() {
                     ) {
 
                         setAttendance(null);
+
+                        setSuccessMessage("");
 
                         setErrorMessage(
                             message
@@ -389,69 +675,68 @@ function StudentScanQR() {
                 }
 
 
-                // =================================================
-                // UNAUTHORIZED
-                // =================================================
+                // =============================================
+                // 400 / 422
+                // =============================================
 
                 if (
-                    response.status === 401
+                    response.status === 400 ||
+                    response.status === 422
                 ) {
 
                     throw new Error(
-                        data?.message ||
-                        "Your login session has expired. Please login again."
+                        getResponseMessage(
+                            data,
+                            "The QR code is invalid or expired. Please scan the latest QR code."
+                        )
                     );
                 }
 
 
-                // =================================================
-                // FORBIDDEN
-                // =================================================
-
-                if (
-                    response.status === 403
-                ) {
-
-                    throw new Error(
-                        data?.message ||
-                        "You are not authorized to mark attendance."
-                    );
-                }
-
-
-                // =================================================
-                // SERVER ERROR
-                // =================================================
+                // =============================================
+                // OTHER SERVER ERRORS
+                // =============================================
 
                 if (
                     !response.ok
                 ) {
 
                     throw new Error(
-                        data?.message ||
-                        "Failed to mark attendance."
+                        getResponseMessage(
+                            data,
+                            `Attendance server error (HTTP ${response.status}).`
+                        )
                     );
                 }
 
 
-                // =================================================
-                // APPLICATION ERROR
-                // =================================================
+                // =============================================
+                // APPLICATION SUCCESS CHECK
+                // =============================================
 
                 if (
-                    !data?.success
+                    !data ||
+                    data.success !== true
                 ) {
 
                     throw new Error(
-                        data?.message ||
-                        "Attendance could not be marked."
+                        getResponseMessage(
+                            data,
+                            "Attendance could not be marked."
+                        )
                     );
                 }
 
 
-                // =================================================
+                // =============================================
                 // SUCCESS
-                // =================================================
+                // =============================================
+
+                console.log(
+                    "Attendance marked successfully:",
+                    data
+                );
+
 
                 if (
                     mountedRef.current
@@ -462,13 +747,18 @@ function StudentScanQR() {
                     );
 
                     setSuccessMessage(
-                        data?.message ||
-                        "Attendance marked successfully."
+                        getResponseMessage(
+                            data,
+                            "Attendance marked successfully."
+                        )
                     );
+
+                    setErrorMessage("");
                 }
 
-
-            } catch (error) {
+            } catch (
+                error
+            ) {
 
                 console.error(
                     "QR attendance error:",
@@ -480,14 +770,26 @@ function StudentScanQR() {
                     mountedRef.current
                 ) {
 
+                    setAttendance(null);
+
+                    setSuccessMessage("");
+
                     setErrorMessage(
                         error?.message ||
                         "Failed to process QR code."
                     );
                 }
 
-
             } finally {
+
+                if (
+                    requestAbortRef.current
+                ) {
+
+                    requestAbortRef.current =
+                        null;
+                }
+
 
                 processingRef.current =
                     false;
@@ -513,9 +815,7 @@ function StudentScanQR() {
         async () => {
 
             const token =
-                localStorage.getItem(
-                    "token"
-                );
+                getAuthToken();
 
 
             if (!token) {
@@ -550,9 +850,6 @@ function StudentScanQR() {
 
                 setAttendance(null);
 
-                processingRef.current =
-                    false;
-
 
                 const readerElement =
                     document.getElementById(
@@ -568,11 +865,19 @@ function StudentScanQR() {
                 }
 
 
+                // -------------------------------------------------
+                // Remove old scanner HTML
+                // -------------------------------------------------
+
                 readerElement.innerHTML =
                     "";
 
 
-                const scanner =
+                // -------------------------------------------------
+                // Create scanner
+                // -------------------------------------------------
+
+                let scanner =
                     new Html5Qrcode(
                         "qr-reader"
                     );
@@ -592,15 +897,18 @@ function StudentScanQR() {
                     },
 
                     aspectRatio: 1.0,
+
                 };
 
 
                 // =================================================
-                // SUCCESS CALLBACK
+                // QR SUCCESS
                 // =================================================
 
                 const onScanSuccess =
-                    (decodedText) => {
+                    (
+                        decodedText
+                    ) => {
 
                         if (
                             !decodedText
@@ -628,25 +936,24 @@ function StudentScanQR() {
 
 
                 // =================================================
-                // FAILURE CALLBACK
+                // QR FAILURE
                 // =================================================
 
                 const onScanFailure =
                     () => {
 
-                        // Normal QR scanning
-                        // failures are ignored.
+                        // Normal scanning misses.
+                        // Do not display an error.
                     };
 
 
                 // =================================================
-                // REAR CAMERA FIRST
+                // START REAR CAMERA
                 // =================================================
 
                 try {
 
                     await scanner.start(
-
                         {
                             facingMode:
                                 "environment",
@@ -659,13 +966,12 @@ function StudentScanQR() {
                         onScanFailure
                     );
 
-
                 } catch (
                     rearCameraError
                 ) {
 
                     console.warn(
-                        "Rear camera unavailable. Trying default camera.",
+                        "Rear camera unavailable. Trying front camera.",
                         rearCameraError
                     );
 
@@ -674,27 +980,22 @@ function StudentScanQR() {
 
                         await scanner.clear();
 
-                    } catch (error) {
-
-                        console.warn(
-                            "Scanner clear warning:",
-                            error
-                        );
+                    } catch {
+                        // Ignore
                     }
 
 
-                    const fallbackScanner =
+                    scanner =
                         new Html5Qrcode(
                             "qr-reader"
                         );
 
 
                     scannerRef.current =
-                        fallbackScanner;
+                        scanner;
 
 
-                    await fallbackScanner.start(
-
+                    await scanner.start(
                         {
                             facingMode:
                                 "user",
@@ -722,8 +1023,9 @@ function StudentScanQR() {
                     );
                 }
 
-
-            } catch (error) {
+            } catch (
+                error
+            ) {
 
                 console.error(
                     "Start scanner error:",
@@ -835,11 +1137,14 @@ function StudentScanQR() {
     const handleScanAgain =
         async () => {
 
+            if (
+                processingRef.current
+            ) {
+                return;
+            }
+
+
             await stopScanner();
-
-
-            processingRef.current =
-                false;
 
 
             setAttendance(null);
@@ -860,12 +1165,12 @@ function StudentScanQR() {
                     startScanner();
                 }
 
-            }, 250);
+            }, 300);
         };
 
 
     // =====================================================
-    // CLEANUP
+    // COMPONENT CLEANUP
     // =====================================================
 
     useEffect(() => {
@@ -879,6 +1184,28 @@ function StudentScanQR() {
             mountedRef.current =
                 false;
 
+
+            // ---------------------------------------------
+            // Cancel attendance request
+            // ---------------------------------------------
+
+            if (
+                requestAbortRef.current
+            ) {
+
+                try {
+
+                    requestAbortRef.current.abort();
+
+                } catch {
+                    // Ignore
+                }
+            }
+
+
+            // ---------------------------------------------
+            // Stop scanner
+            // ---------------------------------------------
 
             const scanner =
                 scannerRef.current;
@@ -899,7 +1226,7 @@ function StudentScanQR() {
                             scanner.clear();
 
                         } catch {
-                            // Ignore cleanup errors
+                            // Ignore
                         }
                     });
             }
@@ -913,6 +1240,7 @@ function StudentScanQR() {
 
             processingRef.current =
                 false;
+
         };
 
     }, []);
@@ -923,6 +1251,7 @@ function StudentScanQR() {
     // =====================================================
 
     return (
+
         <div className="space-y-6">
 
             {/* =================================================
@@ -938,22 +1267,32 @@ function StudentScanQR() {
                         <div className="mb-2 flex items-center gap-2">
 
                             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600">
+
                                 <FaQrcode />
+
                             </div>
 
                             <span className="text-sm font-semibold text-indigo-600">
+
                                 Attendance
+
                             </span>
 
                         </div>
 
+
                         <h1 className="text-3xl font-bold text-slate-800">
+
                             Scan QR Code
+
                         </h1>
 
+
                         <p className="mt-2 text-slate-500">
+
                             Scan your teacher's QR code to mark
                             your attendance.
+
                         </p>
 
                     </div>
@@ -964,7 +1303,9 @@ function StudentScanQR() {
                         <FaShieldAlt className="text-green-500" />
 
                         <span className="text-sm font-medium text-slate-600">
+
                             Secure Attendance
+
                         </span>
 
                     </div>
@@ -983,22 +1324,31 @@ function StudentScanQR() {
                 <div className="flex items-start gap-3 rounded-2xl border border-green-200 bg-green-50 p-5">
 
                     <div className="mt-0.5 text-green-600">
+
                         <FaCheckCircle />
+
                     </div>
+
 
                     <div>
 
                         <p className="font-semibold text-green-800">
+
                             Success
+
                         </p>
 
+
                         <p className="mt-1 text-sm text-green-700">
+
                             {successMessage}
+
                         </p>
 
                     </div>
 
                 </div>
+
             )}
 
 
@@ -1011,22 +1361,31 @@ function StudentScanQR() {
                 <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-5">
 
                     <div className="mt-0.5 text-red-600">
+
                         <FaExclamationTriangle />
+
                     </div>
+
 
                     <div className="flex-1">
 
                         <p className="font-semibold text-red-800">
+
                             Attendance Error
+
                         </p>
 
-                        <p className="mt-1 text-sm text-red-700">
+
+                        <p className="mt-1 wrap-break-word text-sm text-red-700">
+
                             {errorMessage}
+
                         </p>
 
                     </div>
 
                 </div>
+
             )}
 
 
@@ -1040,7 +1399,7 @@ function StudentScanQR() {
 
                     <div className="overflow-hidden rounded-2xl border border-green-200 bg-white shadow-sm">
 
-                        {/* Success Header */}
+                        {/* SUCCESS HEADER */}
 
                         <div className="border-b border-green-100 bg-green-50 px-6 py-8 text-center">
 
@@ -1054,13 +1413,17 @@ function StudentScanQR() {
 
 
                             <h2 className="mt-5 text-2xl font-bold text-slate-800">
+
                                 Attendance Marked
+
                             </h2>
 
 
                             <p className="mt-2 text-sm text-slate-500">
+
                                 Your attendance has been successfully
                                 recorded.
+
                             </p>
 
                         </div>
@@ -1079,19 +1442,26 @@ function StudentScanQR() {
                                     <div className="mb-5 flex items-center gap-3">
 
                                         <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600">
+
                                             <FaUserGraduate />
+
                                         </div>
 
 
                                         <div>
 
                                             <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+
                                                 Student
+
                                             </p>
 
+
                                             <p className="font-semibold text-slate-800">
+
                                                 {attendance.student.name ||
                                                     "-"}
+
                                             </p>
 
                                         </div>
@@ -1104,13 +1474,18 @@ function StudentScanQR() {
                                         <div>
 
                                             <p className="text-xs text-slate-400">
+
                                                 Register Number
+
                                             </p>
 
+
                                             <p className="mt-1 font-semibold text-slate-700">
+
                                                 {attendance.student.register_number ||
                                                     attendance.student.student_id ||
                                                     "-"}
+
                                             </p>
 
                                         </div>
@@ -1119,8 +1494,11 @@ function StudentScanQR() {
                                         <div>
 
                                             <p className="text-xs text-slate-400">
+
                                                 Status
+
                                             </p>
+
 
                                             <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700">
 
@@ -1138,6 +1516,7 @@ function StudentScanQR() {
                                     </div>
 
                                 </div>
+
                             )}
 
 
@@ -1152,24 +1531,34 @@ function StudentScanQR() {
                                     <div className="mb-5 flex items-center gap-3">
 
                                         <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600">
+
                                             <FaBook />
+
                                         </div>
 
 
                                         <div>
 
                                             <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+
                                                 Subject
+
                                             </p>
+
 
                                             <p className="font-semibold text-slate-800">
+
                                                 {attendance.session.subject_code ||
                                                     "-"}
+
                                             </p>
 
+
                                             <p className="text-sm text-slate-500">
+
                                                 {attendance.session.subject_name ||
                                                     "-"}
+
                                             </p>
 
                                         </div>
@@ -1182,12 +1571,17 @@ function StudentScanQR() {
                                         <div>
 
                                             <p className="text-xs text-slate-400">
+
                                                 Staff
+
                                             </p>
 
+
                                             <p className="mt-1 font-medium text-slate-700">
+
                                                 {attendance.session.staff_name ||
                                                     "-"}
+
                                             </p>
 
                                         </div>
@@ -1196,13 +1590,18 @@ function StudentScanQR() {
                                         <div>
 
                                             <p className="text-xs text-slate-400">
+
                                                 Session
+
                                             </p>
 
+
                                             <p className="mt-1 font-medium text-slate-700">
+
                                                 #
                                                 {attendance.session.session_id ||
                                                     "-"}
+
                                             </p>
 
                                         </div>
@@ -1211,12 +1610,17 @@ function StudentScanQR() {
                                         <div>
 
                                             <p className="text-xs text-slate-400">
+
                                                 Date
+
                                             </p>
+
 
                                             <p className="mt-1 font-medium text-slate-700">
+
                                                 {attendance.session.session_date ||
                                                     "-"}
+
                                             </p>
 
                                         </div>
@@ -1225,8 +1629,11 @@ function StudentScanQR() {
                                         <div>
 
                                             <p className="text-xs text-slate-400">
+
                                                 Time
+
                                             </p>
+
 
                                             <p className="mt-1 font-medium text-slate-700">
 
@@ -1245,6 +1652,7 @@ function StudentScanQR() {
                                     </div>
 
                                 </div>
+
                             )}
 
 
@@ -1259,18 +1667,24 @@ function StudentScanQR() {
                                     <div className="flex items-center justify-between gap-4">
 
                                         <span className="text-xs text-slate-400">
+
                                             Attendance ID
+
                                         </span>
 
+
                                         <span className="text-sm font-semibold text-slate-700">
+
                                             #
                                             {attendance.attendance.attendance_id ||
                                                 "-"}
+
                                         </span>
 
                                     </div>
 
                                 </div>
+
                             )}
 
 
@@ -1313,17 +1727,25 @@ function StudentScanQR() {
                             <div className="mb-6 flex items-center gap-3">
 
                                 <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600">
+
                                     <FaCamera />
+
                                 </div>
+
 
                                 <div>
 
                                     <h2 className="font-semibold text-slate-800">
+
                                         How to Scan
+
                                     </h2>
 
+
                                     <p className="text-xs text-slate-400">
+
                                         Follow these steps
+
                                     </p>
 
                                 </div>
@@ -1338,18 +1760,26 @@ function StudentScanQR() {
                                 <div className="flex gap-3">
 
                                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-sm font-bold text-indigo-600">
+
                                         1
+
                                     </div>
+
 
                                     <div>
 
                                         <p className="text-sm font-semibold text-slate-800">
+
                                             Ask your teacher
+
                                         </p>
 
+
                                         <p className="mt-1 text-xs leading-5 text-slate-500">
+
                                             Ask your teacher to start
                                             an attendance session.
+
                                         </p>
 
                                     </div>
@@ -1362,18 +1792,26 @@ function StudentScanQR() {
                                 <div className="flex gap-3">
 
                                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-sm font-bold text-indigo-600">
+
                                         2
+
                                     </div>
+
 
                                     <div>
 
                                         <p className="text-sm font-semibold text-slate-800">
+
                                             Start the camera
+
                                         </p>
 
+
                                         <p className="mt-1 text-xs leading-5 text-slate-500">
+
                                             Click Start Camera and
                                             allow browser camera access.
+
                                         </p>
 
                                     </div>
@@ -1386,18 +1824,26 @@ function StudentScanQR() {
                                 <div className="flex gap-3">
 
                                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-sm font-bold text-indigo-600">
+
                                         3
+
                                     </div>
+
 
                                     <div>
 
                                         <p className="text-sm font-semibold text-slate-800">
+
                                             Scan the QR code
+
                                         </p>
 
+
                                         <p className="mt-1 text-xs leading-5 text-slate-500">
+
                                             Place the teacher's QR
                                             code inside the scanner.
+
                                         </p>
 
                                     </div>
@@ -1410,18 +1856,26 @@ function StudentScanQR() {
                                 <div className="flex gap-3">
 
                                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-100 text-sm font-bold text-green-600">
+
                                         4
+
                                     </div>
+
 
                                     <div>
 
                                         <p className="text-sm font-semibold text-slate-800">
+
                                             Attendance confirmed
+
                                         </p>
 
+
                                         <p className="mt-1 text-xs leading-5 text-slate-500">
+
                                             Your attendance will be
                                             recorded automatically.
+
                                         </p>
 
                                     </div>
@@ -1440,19 +1894,27 @@ function StudentScanQR() {
                             <div className="flex items-start gap-3">
 
                                 <div className="text-green-500">
+
                                     <FaShieldAlt />
+
                                 </div>
+
 
                                 <div>
 
                                     <p className="text-sm font-semibold text-slate-800">
+
                                         Secure QR Attendance
+
                                     </p>
 
+
                                     <p className="mt-1 text-xs leading-5 text-slate-500">
+
                                         QR codes are temporary and
                                         should only be scanned during
                                         your active class session.
+
                                     </p>
 
                                 </div>
@@ -1482,19 +1944,27 @@ function StudentScanQR() {
 
                                 </div>
 
+
                                 <h2 className="mt-4 text-xl font-bold text-slate-800">
+
                                     QR Scanner
+
                                 </h2>
 
+
                                 <p className="mt-1 text-sm text-slate-500">
+
                                     Position the QR code inside
                                     the scanning area.
+
                                 </p>
 
                             </div>
 
 
-                            {/* SCANNER */}
+                            {/* =================================================
+                                SCANNER
+                            ================================================= */}
 
                             <div className="mx-auto max-w-lg overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
 
@@ -1519,6 +1989,7 @@ function StudentScanQR() {
                                         code now.
 
                                     </div>
+
                                 )}
 
 
@@ -1534,6 +2005,7 @@ function StudentScanQR() {
                                     attendance...
 
                                 </div>
+
                             )}
 
 
@@ -1555,6 +2027,7 @@ function StudentScanQR() {
                                         Start Camera
 
                                     </button>
+
                                 )}
 
 
@@ -1576,6 +2049,7 @@ function StudentScanQR() {
                                         Stop Camera
 
                                     </button>
+
                                 )}
 
 
@@ -1586,9 +2060,11 @@ function StudentScanQR() {
                                 <FaClock className="mt-0.5 shrink-0" />
 
                                 <span>
+
                                     Scan the latest QR code displayed
                                     by your teacher. QR codes may
                                     expire after a short time.
+
                                 </span>
 
                             </div>
@@ -1598,6 +2074,7 @@ function StudentScanQR() {
                     </div>
 
                 </div>
+
             )}
 
         </div>
