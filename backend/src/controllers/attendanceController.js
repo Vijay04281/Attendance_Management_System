@@ -8,10 +8,15 @@ const db = require("../config/db");
 //
 // users
 //   ↓ user_id
-// staff
-//   ↓ staff_id
-// staff_subjects
+// students
+//   ↓ student_id
+// attendance
+//   ↓ session_id
+// attendance_sessions
+//
+// attendance_sessions
 //   ├── subject_id
+//   ├── staff_id
 //   └── class_id
 //
 // subject_allocations
@@ -30,20 +35,6 @@ const db = require("../config/db");
 //   ├── department_name
 //   └── department_code
 //
-// students
-//   ├── department
-//   ├── year
-//   └── section
-//
-// attendance_sessions
-//   ├── subject_id
-//   ├── staff_id
-//   └── class_id
-//
-// attendance
-//   ├── session_id
-//   └── student_id
-//
 // =====================================================
 
 
@@ -54,7 +45,6 @@ const db = require("../config/db");
 const getLoggedInStaffId = async (req) => {
     const user = req.user || {};
 
-    // If middleware already provides staff_id
     if (
         user.staff_id !== undefined &&
         user.staff_id !== null
@@ -62,7 +52,6 @@ const getLoggedInStaffId = async (req) => {
         return Number(user.staff_id);
     }
 
-    // Most common JWT structure
     const userId =
         user.user_id ??
         user.id ??
@@ -120,6 +109,7 @@ const getStaffByRequest = async (req) => {
                 name,
                 email,
                 department,
+                phone,
                 role
             FROM staff
             WHERE staff_id = ?
@@ -153,6 +143,7 @@ const getStaffByRequest = async (req) => {
             staff_code,
             name,
             email,
+            phone,
             department,
             role
         FROM staff
@@ -171,16 +162,6 @@ const getStaffByRequest = async (req) => {
 // =====================================================
 // HELPER: CHECK STAFF ALLOCATION
 // =====================================================
-//
-// Checks both:
-//
-// 1. staff_subjects
-// 2. subject_allocations
-//
-// This supports existing data regardless of which
-// allocation table was used.
-//
-// =====================================================
 
 const checkStaffSubjectClassAllocation = async (
     staffId,
@@ -196,7 +177,7 @@ const checkStaffSubjectClassAllocation = async (
     }
 
     // -------------------------------------------------
-    // staff_subjects
+    // STAFF_SUBJECTS
     // -------------------------------------------------
 
     const [staffSubjectRows] =
@@ -231,7 +212,7 @@ const checkStaffSubjectClassAllocation = async (
     }
 
     // -------------------------------------------------
-    // subject_allocations
+    // SUBJECT_ALLOCATIONS
     // -------------------------------------------------
 
     const [allocationRows] =
@@ -575,6 +556,188 @@ const validateStudentForSession = async (
 
 
 // =====================================================
+// HELPER: GET LOGGED-IN STUDENT
+// =====================================================
+//
+// IMPORTANT:
+//
+// Never trust student_id from browser for QR attendance.
+//
+// Student is identified from:
+//
+// JWT user_id
+//      ↓
+// students.user_id
+//
+// =====================================================
+
+const getLoggedInStudent = async (req) => {
+    const user = req.user || {};
+
+    // -------------------------------------------------
+    // 1. If middleware explicitly provides student_id
+    // -------------------------------------------------
+
+    if (
+        user.student_id !== undefined &&
+        user.student_id !== null
+    ) {
+        const [rows] =
+            await db.query(
+                `
+                SELECT
+                    student_id,
+                    user_id,
+                    register_number,
+                    name,
+                    email,
+                    department,
+                    year,
+                    section
+                FROM students
+                WHERE student_id = ?
+                LIMIT 1
+                `,
+                [user.student_id]
+            );
+
+        if (rows.length > 0) {
+            return rows[0];
+        }
+    }
+
+    // -------------------------------------------------
+    // 2. Resolve using JWT user_id
+    // -------------------------------------------------
+
+    const userId =
+        user.user_id ??
+        user.id ??
+        user.userId;
+
+    if (
+        userId === undefined ||
+        userId === null
+    ) {
+        return null;
+    }
+
+    const [rows] =
+        await db.query(
+            `
+            SELECT
+                student_id,
+                user_id,
+                register_number,
+                name,
+                email,
+                department,
+                year,
+                section
+            FROM students
+            WHERE user_id = ?
+            LIMIT 1
+            `,
+            [userId]
+        );
+
+    if (rows.length === 0) {
+        return null;
+    }
+
+    return rows[0];
+};
+
+
+// =====================================================
+// HELPER: EXTRACT QR TOKEN
+// =====================================================
+//
+// Staff QR contains JSON:
+//
+// {
+//     "session_id": 1,
+//     "qr_token": "...",
+//     "allocation_id": 2,
+//     "subject_id": 3,
+//     "staff_id": 4,
+//     "class_id": 5
+// }
+//
+// Student scanner may send either:
+//
+// 1. Raw token
+//
+// OR
+//
+// 2. Complete JSON QR data
+//
+// This helper supports both.
+// =====================================================
+
+const extractQRToken = (value) => {
+    if (
+        value === undefined ||
+        value === null
+    ) {
+        return null;
+    }
+
+    const raw =
+        String(value).trim();
+
+    if (!raw) {
+        return null;
+    }
+
+    // -------------------------------------------------
+    // RAW TOKEN
+    // -------------------------------------------------
+
+    if (
+        !raw.startsWith("{") &&
+        !raw.startsWith("[")
+    ) {
+        return raw;
+    }
+
+    // -------------------------------------------------
+    // JSON QR DATA
+    // -------------------------------------------------
+
+    try {
+        const parsed =
+            JSON.parse(raw);
+
+        if (
+            parsed &&
+            typeof parsed === "object" &&
+            !Array.isArray(parsed)
+        ) {
+            const token =
+                parsed.qr_token ??
+                parsed.qrToken ??
+                parsed.token;
+
+            if (
+                token !== undefined &&
+                token !== null &&
+                String(token).trim()
+            ) {
+                return String(token).trim();
+            }
+        }
+    } catch (error) {
+        // If it is not valid JSON,
+        // treat it as a raw token.
+        return raw;
+    }
+
+    return null;
+};
+
+
+// =====================================================
 // GET MY SUBJECT + CLASS ALLOCATIONS
 // GET /api/attendance/my-subject-classes
 // =====================================================
@@ -708,13 +871,7 @@ const getMySubjectClasses = async (
 
 // =====================================================
 // GET STUDENTS FOR MY ASSIGNED SUBJECT + CLASS
-//
-// GET
-// /api/attendance/my-subject-students
-//
-// Query:
-// ?subject_id=1&class_id=5
-//
+// GET /api/attendance/my-subject-students
 // =====================================================
 
 const getMySubjectStudents = async (
@@ -751,10 +908,6 @@ const getMySubjectStudents = async (
             });
         }
 
-        // -------------------------------------------------
-        // VERIFY STAFF ALLOCATION
-        // -------------------------------------------------
-
         const allocation =
             await checkStaffSubjectClassAllocation(
                 staffId,
@@ -769,10 +922,6 @@ const getMySubjectStudents = async (
                     "You are not assigned to this subject and class"
             });
         }
-
-        // -------------------------------------------------
-        // GET CLASS
-        // -------------------------------------------------
 
         const [classes] =
             await db.query(
@@ -809,10 +958,6 @@ const getMySubjectStudents = async (
 
         const selectedClass =
             classes[0];
-
-        // -------------------------------------------------
-        // GET EXACT CLASS STUDENTS
-        // -------------------------------------------------
 
         const [students] =
             await db.query(
@@ -881,7 +1026,8 @@ const getMySubjectStudents = async (
             subject_allocation:
                 allocation,
 
-            class: selectedClass,
+            class:
+                selectedClass,
 
             count:
                 students.length,
@@ -1146,7 +1292,8 @@ const getAttendanceById = async (
 
         return res.status(200).json({
             success: true,
-            attendance: rows[0]
+            attendance:
+                rows[0]
         });
 
     } catch (error) {
@@ -1732,10 +1879,6 @@ const markAttendance = async (
         const session =
             sessions[0];
 
-        // -------------------------------------------------
-        // STAFF AUTHORIZATION
-        // -------------------------------------------------
-
         const staffValidation =
             await validateStaffForSession(
                 req,
@@ -1936,18 +2079,37 @@ const markAttendance = async (
 // =====================================================
 // MARK ATTENDANCE USING QR TOKEN
 // POST /api/attendance/scan
+// =====================================================
 //
-// SECURITY:
+// IMPORTANT:
 //
-// The student_id is NOT trusted from the browser.
+// Student ID is NEVER trusted from browser.
 //
-// The logged-in user's user_id is taken from JWT
-// middleware and mapped to students.user_id.
+// Logged-in user:
 //
-// Request body:
+// JWT user_id
+//      ↓
+// students.user_id
+//      ↓
+// student_id
+//
+// QR content can be:
+//
+// Raw token:
+//
+// "abc123..."
+//
+// OR:
+//
+// JSON:
 //
 // {
-//     "qr_token": "...."
+//     "session_id": 1,
+//     "qr_token": "abc123...",
+//     "allocation_id": 2,
+//     "subject_id": 3,
+//     "staff_id": 4,
+//     "class_id": 5
 // }
 //
 // =====================================================
@@ -1959,7 +2121,7 @@ const scanAttendance = async (
     try {
 
         // =================================================
-        // GET QR TOKEN
+        // GET QR VALUE
         // =================================================
 
         const {
@@ -1967,7 +2129,8 @@ const scanAttendance = async (
         } = req.body || {};
 
         if (
-            !qr_token ||
+            qr_token === undefined ||
+            qr_token === null ||
             !String(qr_token).trim()
         ) {
             return res.status(400).json({
@@ -1977,65 +2140,43 @@ const scanAttendance = async (
             });
         }
 
+
+        // =================================================
+        // EXTRACT REAL TOKEN
+        // =================================================
+
         const cleanQrToken =
-            String(qr_token).trim();
-
-
-        // =================================================
-        // GET LOGGED-IN USER
-        // =================================================
-
-        const user =
-            req.user || {};
-
-        const userId =
-            user.user_id ??
-            user.id ??
-            user.userId;
+            extractQRToken(
+                qr_token
+            );
 
         if (
-            userId === undefined ||
-            userId === null
+            !cleanQrToken
         ) {
-            return res.status(401).json({
+            return res.status(400).json({
                 success: false,
                 message:
-                    "Authenticated user not found. Please login again."
+                    "Invalid QR code format"
             });
         }
 
 
         // =================================================
-        // FIND STUDENT USING LOGGED-IN USER
+        // GET LOGGED-IN STUDENT
         // =================================================
+        //
+        // IMPORTANT:
+        // student_id is NOT taken from req.body.
+        //
+        // The authenticated JWT identifies the student.
+        //
 
-        const [studentRows] =
-            await db.query(
-                `
-                SELECT
-
-                    student_id,
-                    user_id,
-                    register_number,
-                    name,
-                    email,
-                    department,
-                    year,
-                    section
-
-                FROM students
-
-                WHERE user_id = ?
-
-                LIMIT 1
-                `,
-                [userId]
+        const student =
+            await getLoggedInStudent(
+                req
             );
 
-
-        if (
-            studentRows.length === 0
-        ) {
+        if (!student) {
             return res.status(403).json({
                 success: false,
                 message:
@@ -2043,18 +2184,36 @@ const scanAttendance = async (
             });
         }
 
-
-        const student =
-            studentRows[0];
-
         const studentId =
             Number(
                 student.student_id
             );
 
 
+        if (
+            !studentId ||
+            Number.isNaN(studentId)
+        ) {
+            return res.status(403).json({
+                success: false,
+                message:
+                    "Valid student account could not be resolved"
+            });
+        }
+
+
         // =================================================
-        // FIND ACTIVE SESSION USING QR TOKEN
+        // FIND ACTIVE + NON-EXPIRED SESSION
+        // =================================================
+        //
+        // Expiry is checked directly by MySQL using NOW().
+        //
+        // This avoids timezone mismatch between:
+        //
+        // Render server
+        // Student browser
+        // MySQL
+        //
         // =================================================
 
         const [sessions] =
@@ -2087,15 +2246,65 @@ const scanAttendance = async (
 
                   AND status = 'ACTIVE'
 
+                  AND qr_expires_at > NOW()
+
                 LIMIT 1
                 `,
                 [cleanQrToken]
             );
 
 
+        // =================================================
+        // TOKEN NOT FOUND / EXPIRED
+        // =================================================
+
         if (
             sessions.length === 0
         ) {
+
+            const [expiredRows] =
+                await db.query(
+                    `
+                    SELECT
+                        session_id,
+                        status,
+                        qr_expires_at
+
+                    FROM attendance_sessions
+
+                    WHERE qr_token = ?
+
+                    LIMIT 1
+                    `,
+                    [cleanQrToken]
+                );
+
+            if (
+                expiredRows.length > 0
+            ) {
+                const expiredSession =
+                    expiredRows[0];
+
+                if (
+                    String(
+                        expiredSession.status
+                    ).toUpperCase() !==
+                    "ACTIVE"
+                ) {
+                    return res.status(404).json({
+                        success: false,
+                        message:
+                            "Invalid or inactive QR code"
+                    });
+                }
+
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "QR code has expired"
+                });
+            }
+
             return res.status(404).json({
                 success: false,
                 message:
@@ -2124,14 +2333,14 @@ const scanAttendance = async (
 
 
         // =================================================
-        // CHECK QR EXPIRATION
+        // SECOND EXPIRATION CHECK
         // =================================================
 
         if (
             session.qr_expires_at_ms &&
             Number(
                 session.qr_expires_at_ms
-            ) < Date.now()
+            ) <= Date.now()
         ) {
             return res.status(400).json({
                 success: false,
@@ -2226,7 +2435,6 @@ const scanAttendance = async (
                 session.start_time || ""
             ).substring(0, 8);
 
-
         if (startTime) {
 
             const [
@@ -2238,10 +2446,8 @@ const scanAttendance = async (
                     .split(":")
                     .map(Number);
 
-
             const sessionStart =
                 new Date(now);
-
 
             sessionStart.setHours(
                 hours || 0,
@@ -2249,7 +2455,6 @@ const scanAttendance = async (
                 seconds || 0,
                 0
             );
-
 
             if (
                 now >
@@ -2426,6 +2631,7 @@ const scanAttendance = async (
             // ---------------------------------------------
 
             student: {
+
                 student_id:
                     student.student_id,
 
@@ -2456,6 +2662,7 @@ const scanAttendance = async (
             // ---------------------------------------------
 
             session: {
+
                 session_id:
                     session.session_id,
 
@@ -2507,6 +2714,7 @@ const scanAttendance = async (
             // ---------------------------------------------
 
             attendance: {
+
                 attendance_id:
                     created.attendance_id,
 
@@ -2562,6 +2770,8 @@ const scanAttendance = async (
         });
     }
 };
+
+
 // =====================================================
 // UPDATE ATTENDANCE
 // PUT /api/attendance/:id
@@ -2674,10 +2884,6 @@ const updateAttendance = async (
 
         const session =
             sessions[0];
-
-        // -------------------------------------------------
-        // STAFF AUTHORIZATION
-        // -------------------------------------------------
 
         const staffValidation =
             await validateStaffForSession(
@@ -2957,7 +3163,6 @@ module.exports = {
 
     deleteAttendance,
 
-    // NEW
     getMySubjectClasses,
 
     getMySubjectStudents

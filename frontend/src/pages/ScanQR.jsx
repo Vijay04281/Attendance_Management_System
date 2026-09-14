@@ -89,6 +89,7 @@ function StudentScanQR() {
                 if (
                     scannerStartedRef.current
                 ) {
+
                     try {
 
                         await scanner.stop();
@@ -134,9 +135,80 @@ function StudentScanQR() {
             if (
                 mountedRef.current
             ) {
+
                 setScanning(false);
             }
         }
+    };
+
+
+    // =====================================================
+    // EXTRACT QR TOKEN
+    //
+    // Teacher QR contains JSON:
+    //
+    // {
+    //   session_id: ...,
+    //   qr_token: "...",
+    //   allocation_id: ...,
+    //   subject_id: ...,
+    //   staff_id: ...,
+    //   class_id: ...
+    // }
+    //
+    // We MUST send only qr_token to backend.
+    // =====================================================
+
+    const extractQRToken = (decodedText) => {
+
+        if (
+            !decodedText ||
+            !String(decodedText).trim()
+        ) {
+            return null;
+        }
+
+
+        const rawValue =
+            String(decodedText).trim();
+
+
+        // -------------------------------------------------
+        // First try JSON QR
+        // -------------------------------------------------
+
+        try {
+
+            const parsed =
+                JSON.parse(rawValue);
+
+
+            if (
+                parsed &&
+                typeof parsed === "object" &&
+                parsed.qr_token
+            ) {
+
+                return String(
+                    parsed.qr_token
+                ).trim();
+            }
+
+
+        } catch (error) {
+
+            // Not JSON.
+            // It may already be a raw QR token.
+        }
+
+
+        // -------------------------------------------------
+        // Fallback:
+        // If QR itself contains only the token,
+        // accept it directly.
+        // -------------------------------------------------
+
+        return rawValue;
     };
 
 
@@ -145,11 +217,11 @@ function StudentScanQR() {
     // =====================================================
 
     const processQRCode =
-        async (qrToken) => {
+        async (decodedText) => {
 
             if (
-                !qrToken ||
-                !String(qrToken).trim()
+                !decodedText ||
+                !String(decodedText).trim()
             ) {
                 return;
             }
@@ -181,6 +253,31 @@ function StudentScanQR() {
 
 
                 // -----------------------------------------
+                // EXTRACT ACTUAL QR TOKEN
+                // -----------------------------------------
+
+                const qrToken =
+                    extractQRToken(
+                        decodedText
+                    );
+
+
+                if (
+                    !qrToken
+                ) {
+
+                    throw new Error(
+                        "Invalid QR code. Please scan the QR code currently displayed by your teacher."
+                    );
+                }
+
+
+                console.log(
+                    "QR token extracted successfully."
+                );
+
+
+                // -----------------------------------------
                 // STOP CAMERA
                 // -----------------------------------------
 
@@ -206,14 +303,12 @@ function StudentScanQR() {
 
 
                 // -----------------------------------------
-                // SEND QR TOKEN
+                // SEND ONLY QR TOKEN
                 //
-                // IMPORTANT:
+                // student_id is intentionally NOT sent.
                 //
-                // student_id is NOT sent from frontend.
-                //
-                // Backend identifies the student from
-                // the authenticated user.
+                // Backend identifies the student using
+                // the authenticated JWT user.
                 // -----------------------------------------
 
                 const response =
@@ -233,9 +328,7 @@ function StudentScanQR() {
                             body:
                                 JSON.stringify({
                                     qr_token:
-                                        String(
-                                            qrToken
-                                        ).trim(),
+                                        qrToken,
                                 }),
                         }
                     );
@@ -293,6 +386,36 @@ function StudentScanQR() {
                     }
 
                     return;
+                }
+
+
+                // =================================================
+                // UNAUTHORIZED
+                // =================================================
+
+                if (
+                    response.status === 401
+                ) {
+
+                    throw new Error(
+                        data?.message ||
+                        "Your login session has expired. Please login again."
+                    );
+                }
+
+
+                // =================================================
+                // FORBIDDEN
+                // =================================================
+
+                if (
+                    response.status === 403
+                ) {
+
+                    throw new Error(
+                        data?.message ||
+                        "You are not authorized to mark attendance."
+                    );
                 }
 
 
@@ -493,6 +616,11 @@ function StudentScanQR() {
                         }
 
 
+                        console.log(
+                            "QR code detected."
+                        );
+
+
                         processQRCode(
                             decodedText
                         );
@@ -505,6 +633,7 @@ function StudentScanQR() {
 
                 const onScanFailure =
                     () => {
+
                         // Normal QR scanning
                         // failures are ignored.
                     };
@@ -1346,9 +1475,11 @@ function StudentScanQR() {
                             <div className="mb-6 text-center">
 
                                 <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600">
+
                                     <FaQrcode
                                         size={28}
                                     />
+
                                 </div>
 
                                 <h2 className="mt-4 text-xl font-bold text-slate-800">
