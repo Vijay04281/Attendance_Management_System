@@ -136,10 +136,6 @@ function getUserRole(user) {
     .trim()
     .toUpperCase();
 
-  // ===================================================
-  // ROLE NORMALIZATION
-  // ===================================================
-
   if (
     role === "TEACHING_STAFF" ||
     role === "TEACHING STAFF"
@@ -237,8 +233,12 @@ function Login() {
         throw new Error("Password is required.");
       }
 
+      // =================================================
+      // PRODUCTION LOGIN API
+      // =================================================
+
       const response = await fetch(
-        "https://attendance-management-system-gpci.onrender.com/api",
+        "https://attendance-management-system-gpci.onrender.com/api/auth/login",
         {
           method: "POST",
           headers: {
@@ -536,10 +536,6 @@ function ProtectedRoute({
   const userString =
     localStorage.getItem("user");
 
-  // ===================================================
-  // NOT LOGGED IN
-  // ===================================================
-
   if (!token || !userString) {
     return (
       <Navigate
@@ -548,10 +544,6 @@ function ProtectedRoute({
       />
     );
   }
-
-  // ===================================================
-  // READ STORED USER
-  // ===================================================
 
   let user;
 
@@ -580,16 +572,8 @@ function ProtectedRoute({
     );
   }
 
-  // ===================================================
-  // NORMALIZE ROLE
-  // ===================================================
-
   const normalizedRole =
     getUserRole(user);
-
-  // ===================================================
-  // NO ROLE
-  // ===================================================
 
   if (!normalizedRole) {
     console.error(
@@ -613,10 +597,6 @@ function ProtectedRoute({
     );
   }
 
-  // ===================================================
-  // DETERMINE ALLOWED ROLES
-  // ===================================================
-
   let roles = [];
 
   if (role) {
@@ -634,17 +614,9 @@ function ProtectedRoute({
     ];
   }
 
-  // ===================================================
-  // REMOVE DUPLICATES
-  // ===================================================
-
   roles = [
     ...new Set(roles),
   ];
-
-  // ===================================================
-  // ACCESS CHECK
-  // ===================================================
 
   if (
     roles.length > 0 &&
@@ -745,18 +717,14 @@ function App() {
 
       <Routes>
 
-        {/* =================================================
-            LOGIN
-        ================================================= */}
+        {/* LOGIN */}
 
         <Route
           path="/"
           element={<Login />}
         />
 
-        {/* =================================================
-            ADMIN DASHBOARD
-        ================================================= */}
+        {/* ADMIN */}
 
         <Route
           path="/admin"
@@ -769,10 +737,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            ADMIN - DEPARTMENTS
-        ================================================= */}
-
         <Route
           path="/admin/departments"
           element={
@@ -783,10 +747,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            ADMIN - STAFF
-        ================================================= */}
 
         <Route
           path="/admin/staff"
@@ -799,10 +759,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            ADMIN - STUDENTS
-        ================================================= */}
-
         <Route
           path="/admin/students"
           element={
@@ -813,10 +769,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            ADMIN - CLASSES
-        ================================================= */}
 
         <Route
           path="/admin/classes"
@@ -829,10 +781,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            ADMIN - SUBJECTS
-        ================================================= */}
-
         <Route
           path="/admin/subjects"
           element={
@@ -843,10 +791,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            ADMIN - SUBJECT ALLOCATIONS
-        ================================================= */}
 
         <Route
           path="/admin/subject-allocations"
@@ -859,10 +803,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            ADMIN - CLASS TEACHER ASSIGNMENTS
-        ================================================= */}
-
         <Route
           path="/admin/class-teacher-assignments"
           element={
@@ -873,10 +813,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            ADMIN - TIMETABLE
-        ================================================= */}
 
         <Route
           path="/admin/timetable"
@@ -889,10 +825,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            ADMIN - ATTENDANCE
-        ================================================= */}
-
         <Route
           path="/admin/attendance"
           element={
@@ -903,10 +835,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            ADMIN - ATTENDANCE SESSIONS
-        ================================================= */}
 
         <Route
           path="/admin/attendance/sessions"
@@ -919,10 +847,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            ADMIN - ATTENDANCE RECORDS
-        ================================================= */}
-
         <Route
           path="/admin/attendance/records"
           element={
@@ -933,10 +857,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            ADMIN - ATTENDANCE REPORTS
-        ================================================= */}
 
         <Route
           path="/admin/attendance/reports"
@@ -949,10 +869,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            ADMIN - QR CODES
-        ================================================= */}
-
         <Route
           path="/admin/qr-codes"
           element={
@@ -963,10 +879,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            ADMIN - NOTIFICATIONS
-        ================================================= */}
 
         <Route
           path="/admin/notifications"
@@ -979,10 +891,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            ADMIN - AUDIT LOGS
-        ================================================= */}
-
         <Route
           path="/admin/audit-logs"
           element={
@@ -994,9 +902,7 @@ function App() {
           }
         />
 
-        {/* =================================================
-            ADMIN -> HOD DASHBOARD
-        ================================================= */}
+        {/* ADMIN → HOD */}
 
         <Route
           path="/admin/departments/computer-science/hod"
@@ -1046,9 +952,7 @@ function App() {
           }
         />
 
-        {/* =================================================
-            HOD DASHBOARD
-        ================================================= */}
+        {/* HOD */}
 
         <Route
           path="/hod"
@@ -1060,10 +964,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            HOD DEPARTMENT DASHBOARD
-        ================================================= */}
 
         <Route
           path="/hod/:department"
@@ -1081,10 +981,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            HOD DEPARTMENT STUDENTS
-        ================================================= */}
-
         <Route
           path="/hod/:department/students"
           element={
@@ -1100,10 +996,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            HOD DEPARTMENT STAFF
-        ================================================= */}
 
         <Route
           path="/hod/:department/staff"
@@ -1121,10 +1013,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            HOD DEPARTMENT SUBJECTS
-        ================================================= */}
-
         <Route
           path="/hod/:department/subjects"
           element={
@@ -1140,10 +1028,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            HOD DEPARTMENT TIMETABLE
-        ================================================= */}
 
         <Route
           path="/hod/:department/timetable"
@@ -1161,10 +1045,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            HOD DEPARTMENT ATTENDANCE
-        ================================================= */}
-
         <Route
           path="/hod/:department/attendance"
           element={
@@ -1180,10 +1060,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            HOD ATTENDANCE REPORT - DAILY
-        ================================================= */}
 
         <Route
           path="/hod/:department/reports/daily"
@@ -1201,10 +1077,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            HOD ATTENDANCE REPORT - SUBJECT
-        ================================================= */}
-
         <Route
           path="/hod/:department/reports/subject"
           element={
@@ -1220,10 +1092,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            HOD ATTENDANCE REPORT - CLASS
-        ================================================= */}
 
         <Route
           path="/hod/:department/reports/class"
@@ -1241,10 +1109,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            HOD ATTENDANCE REPORT - STUDENT
-        ================================================= */}
-
         <Route
           path="/hod/:department/reports/student"
           element={
@@ -1260,10 +1124,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            HOD ATTENDANCE REPORT - DEPARTMENT
-        ================================================= */}
 
         <Route
           path="/hod/:department/reports/department"
@@ -1281,10 +1141,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            HOD ATTENDANCE REPORT - PERCENTAGE
-        ================================================= */}
-
         <Route
           path="/hod/:department/reports/percentage"
           element={
@@ -1301,9 +1157,7 @@ function App() {
           }
         />
 
-        {/* =================================================
-            HOD YEAR 2 - STUDENTS
-        ================================================= */}
+        {/* HOD YEAR 2 */}
 
         <Route
           path="/hod/:department/year/2/students"
@@ -1321,10 +1175,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            HOD YEAR 2 - SUBJECTS
-        ================================================= */}
-
         <Route
           path="/hod/:department/year/2/subjects"
           element={
@@ -1340,10 +1190,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            HOD YEAR 2 - TIMETABLE
-        ================================================= */}
 
         <Route
           path="/hod/:department/year/2/timetable"
@@ -1361,10 +1207,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            HOD YEAR 2 - ATTENDANCE
-        ================================================= */}
-
         <Route
           path="/hod/:department/year/2/attendance"
           element={
@@ -1381,9 +1223,7 @@ function App() {
           }
         />
 
-        {/* =================================================
-            HOD YEAR 3 - STUDENTS
-        ================================================= */}
+        {/* HOD YEAR 3 */}
 
         <Route
           path="/hod/:department/year/3/students"
@@ -1401,10 +1241,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            HOD YEAR 3 - SUBJECTS
-        ================================================= */}
-
         <Route
           path="/hod/:department/year/3/subjects"
           element={
@@ -1420,10 +1256,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            HOD YEAR 3 - TIMETABLE
-        ================================================= */}
 
         <Route
           path="/hod/:department/year/3/timetable"
@@ -1441,10 +1273,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            HOD YEAR 3 - ATTENDANCE
-        ================================================= */}
-
         <Route
           path="/hod/:department/year/3/attendance"
           element={
@@ -1461,10 +1289,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            HOD GENERAL TIMETABLE
-        ================================================= */}
-
         <Route
           path="/hod/timetable"
           element={
@@ -1476,9 +1300,7 @@ function App() {
           }
         />
 
-        {/* =================================================
-            STAFF DASHBOARD
-        ================================================= */}
+        {/* STAFF */}
 
         <Route
           path="/staff"
@@ -1491,10 +1313,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            STAFF STUDENTS
-        ================================================= */}
-
         <Route
           path="/staff/students"
           element={
@@ -1505,10 +1323,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            STAFF CLASSES
-        ================================================= */}
 
         <Route
           path="/staff/classes"
@@ -1521,10 +1335,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            STAFF TIMETABLE
-        ================================================= */}
-
         <Route
           path="/staff/timetable"
           element={
@@ -1535,10 +1345,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            STAFF ATTENDANCE
-        ================================================= */}
 
         <Route
           path="/staff/attendance"
@@ -1551,10 +1357,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            STAFF START ATTENDANCE
-        ================================================= */}
-
         <Route
           path="/staff/start-attendance"
           element={
@@ -1565,10 +1367,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            STAFF REPORTS
-        ================================================= */}
 
         <Route
           path="/staff/reports"
@@ -1581,10 +1379,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            GENERAL ATTENDANCE REPORTS
-        ================================================= */}
-
         <Route
           path="/attendance-reports"
           element={
@@ -1596,9 +1390,7 @@ function App() {
           }
         />
 
-        {/* =================================================
-            CLASS TEACHER DASHBOARD
-        ================================================= */}
+        {/* CLASS TEACHER */}
 
         <Route
           path="/class-teacher"
@@ -1611,10 +1403,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            CLASS TEACHER MY CLASS
-        ================================================= */}
-
         <Route
           path="/class-teacher/class"
           element={
@@ -1625,10 +1413,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            CLASS TEACHER STUDENTS
-        ================================================= */}
 
         <Route
           path="/class-teacher/students"
@@ -1641,10 +1425,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            CLASS TEACHER ATTENDANCE
-        ================================================= */}
-
         <Route
           path="/class-teacher/attendance"
           element={
@@ -1655,10 +1435,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            CLASS TEACHER ABSENT
-        ================================================= */}
 
         <Route
           path="/class-teacher/absent"
@@ -1671,10 +1447,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            CLASS TEACHER SUBJECTS
-        ================================================= */}
-
         <Route
           path="/class-teacher/subjects"
           element={
@@ -1685,10 +1457,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            CLASS TEACHER REPORTS
-        ================================================= */}
 
         <Route
           path="/class-teacher/reports"
@@ -1701,10 +1469,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            CLASS TEACHER ANALYTICS
-        ================================================= */}
-
         <Route
           path="/class-teacher/analytics"
           element={
@@ -1715,10 +1479,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            CLASS TEACHER STAFF
-        ================================================= */}
 
         <Route
           path="/class-teacher/staff"
@@ -1731,10 +1491,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            CLASS TEACHER TIMETABLE
-        ================================================= */}
-
         <Route
           path="/class-teacher/timetable"
           element={
@@ -1745,10 +1501,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            CLASS TEACHER PROFILE
-        ================================================= */}
 
         <Route
           path="/class-teacher/profile"
@@ -1761,9 +1513,7 @@ function App() {
           }
         />
 
-        {/* =================================================
-            STUDENT DASHBOARD
-        ================================================= */}
+        {/* STUDENT */}
 
         <Route
           path="/student"
@@ -1776,10 +1526,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            STUDENT TIMETABLE
-        ================================================= */}
-
         <Route
           path="/student/timetable"
           element={
@@ -1790,10 +1536,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* =================================================
-            STUDENT ATTENDANCE
-        ================================================= */}
 
         <Route
           path="/student/attendance"
@@ -1806,10 +1548,6 @@ function App() {
           }
         />
 
-        {/* =================================================
-            STUDENT SCAN QR
-        ================================================= */}
-
         <Route
           path="/student/scan-qr"
           element={
@@ -1821,9 +1559,7 @@ function App() {
           }
         />
 
-        {/* =================================================
-            UNKNOWN ROUTE
-        ================================================= */}
+        {/* UNKNOWN ROUTE */}
 
         <Route
           path="*"
