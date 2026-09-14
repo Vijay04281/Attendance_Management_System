@@ -112,6 +112,10 @@ const adminRoutes = require("./routes/adminRoutes");
 
 const app = express();
 
+app.use(
+    "/api/attendance",
+    attendanceRoutes
+);
 // =====================================================
 // CORS
 // =====================================================

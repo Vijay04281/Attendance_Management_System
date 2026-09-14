@@ -2,65 +2,93 @@ const db = require("../config/db");
 
 // =====================================================
 // ATTENDANCE CONTROLLER
-// =====================================================
 //
-// DATABASE RELATIONSHIP
+// IMPORTANT DATA FLOW
 //
-// users
-//   ↓ user_id
-// students
-//   ↓ student_id
-// attendance
-//   ↓ session_id
-// attendance_sessions
+// STUDENT LOGIN
+// users.user_id
+//      ↓
+// students.user_id
+//      ↓
+// students.student_id
+//      ↓
+// attendance.student_id
 //
-// attendance_sessions
-//   ├── subject_id
-//   ├── staff_id
-//   └── class_id
+// STAFF QR SCAN
+// attendance_sessions.session_id
+//      ↓
+// attendance.session_id
+//      ↓
+// attendance.student_id
 //
-// subject_allocations
-//   ├── subject_id
-//   ├── staff_id
-//   └── class_id
-//
-// classes
-//   ├── class_id
-//   ├── department_id
-//   ├── year
-//   └── section
-//
-// departments
-//   ├── department_id
-//   ├── department_name
-//   └── department_code
-//
+// This controller always resolves the real student_id
+// from the authenticated JWT for student operations.
 // =====================================================
 
 
 // =====================================================
-// HELPER: GET LOGGED-IN STAFF ID
+// COMMON HELPERS
 // =====================================================
 
-const getLoggedInStaffId = async (req) => {
-    const user = req.user || {};
+function normalize(value) {
+    return String(value ?? "")
+        .trim()
+        .toLowerCase();
+}
 
-    if (
-        user.staff_id !== undefined &&
-        user.staff_id !== null
-    ) {
-        return Number(user.staff_id);
+function getUserId(req) {
+    return (
+        req.user?.user_id ??
+        req.user?.id ??
+        req.user?.userId ??
+        null
+    );
+}
+
+function getUserRole(req) {
+    return normalize(
+        req.user?.role ??
+        req.user?.user_role ??
+        req.user?.userRole
+    ).toUpperCase();
+}
+
+
+// =====================================================
+// GET LOGGED-IN STAFF ID
+// =====================================================
+
+async function getLoggedInStaffId(req) {
+    const userId = getUserId(req);
+
+    if (!userId) {
+        return null;
     }
 
-    const userId =
-        user.user_id ??
-        user.id ??
-        user.userId;
+    const [rows] = await db.query(
+        `
+        SELECT staff_id
+        FROM staff
+        WHERE user_id = ?
+        LIMIT 1
+        `,
+        [userId]
+    );
 
-    if (
-        userId === undefined ||
-        userId === null
-    ) {
+    return rows.length
+        ? Number(rows[0].staff_id)
+        : null;
+}
+
+
+// =====================================================
+// GET LOGGED-IN STAFF
+// =====================================================
+
+async function getStaffByRequest(req) {
+    const userId = getUserId(req);
+
+    if (!userId) {
         return null;
     }
 
@@ -73,6 +101,7 @@ const getLoggedInStaffId = async (req) => {
             name,
             email,
             department,
+            phone,
             role
         FROM staff
         WHERE user_id = ?
@@ -81,2615 +110,1898 @@ const getLoggedInStaffId = async (req) => {
         [userId]
     );
 
-    if (rows.length === 0) {
+    return rows.length
+        ? rows[0]
+        : null;
+}
+
+
+// =====================================================
+// GET LOGGED-IN STUDENT
+//
+// NEVER assume users.user_id == students.student_id.
+//
+// This is the main fix for the Student Dashboard.
+// =====================================================
+
+async function getLoggedInStudent(req) {
+    const userId = getUserId(req);
+
+    if (!userId) {
         return null;
     }
 
-    return Number(rows[0].staff_id);
-};
+    const [rows] = await db.query(
+        `
+        SELECT
+            s.student_id,
+            s.user_id,
+            s.student_code,
+            s.name,
+            s.email,
+            s.phone,
+            s.department,
+            s.year,
+            s.section
+        FROM students s
+        WHERE s.user_id = ?
+        LIMIT 1
+        `,
+        [userId]
+    );
+
+    return rows.length
+        ? rows[0]
+        : null;
+}
 
 
 // =====================================================
-// HELPER: GET STAFF DETAILS
+// EXTRACT QR TOKEN
+//
+// Accepts:
+// 1. Raw token
+// 2. JSON QR payload
 // =====================================================
 
-const getStaffByRequest = async (req) => {
-    const user = req.user || {};
+function extractQRToken(value) {
+    if (!value) {
+        return null;
+    }
 
+    if (typeof value !== "string") {
+        return null;
+    }
+
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+        return null;
+    }
+
+    // Raw token
     if (
-        user.staff_id !== undefined &&
-        user.staff_id !== null
+        !trimmed.startsWith("{") &&
+        !trimmed.startsWith("[")
     ) {
+        return trimmed;
+    }
+
+    try {
+        const parsed = JSON.parse(trimmed);
+
+        if (typeof parsed === "string") {
+            return parsed.trim();
+        }
+
+        return (
+            parsed.qr_token ??
+            parsed.qrToken ??
+            parsed.token ??
+            null
+        );
+    } catch {
+        return trimmed;
+    }
+}
+
+
+// =====================================================
+// GET SESSION ALLOCATION
+// =====================================================
+
+async function getSessionAllocation(session) {
+    if (!session) {
+        return null;
+    }
+
+    const allocationId = session.allocation_id;
+
+    if (allocationId) {
         const [rows] = await db.query(
             `
             SELECT
-                staff_id,
-                user_id,
-                staff_code,
-                name,
-                email,
-                department,
-                phone,
-                role
-            FROM staff
-            WHERE staff_id = ?
+                sa.*,
+
+                sub.subject_id AS joined_subject_id,
+                sub.subject_code,
+                sub.subject_name,
+
+                c.class_id AS joined_class_id,
+                c.year AS class_year,
+                c.section AS class_section,
+
+                d.department_id,
+                d.department_name
+
+            FROM subject_allocations sa
+
+            LEFT JOIN subjects sub
+                ON sub.subject_id = sa.subject_id
+
+            LEFT JOIN classes c
+                ON c.class_id = sa.class_id
+
+            LEFT JOIN departments d
+                ON d.department_id = c.department_id
+
+            WHERE sa.allocation_id = ?
+
             LIMIT 1
             `,
-            [user.staff_id]
+            [allocationId]
         );
 
-        return rows.length > 0
-            ? rows[0]
-            : null;
-    }
-
-    const userId =
-        user.user_id ??
-        user.id ??
-        user.userId;
-
-    if (
-        userId === undefined ||
-        userId === null
-    ) {
-        return null;
-    }
-
-    const [rows] = await db.query(
-        `
-        SELECT
-            staff_id,
-            user_id,
-            staff_code,
-            name,
-            email,
-            phone,
-            department,
-            role
-        FROM staff
-        WHERE user_id = ?
-        LIMIT 1
-        `,
-        [userId]
-    );
-
-    return rows.length > 0
-        ? rows[0]
-        : null;
-};
-
-
-// =====================================================
-// HELPER: CHECK STAFF ALLOCATION
-// =====================================================
-
-const checkStaffSubjectClassAllocation = async (
-    staffId,
-    subjectId,
-    classId
-) => {
-    if (
-        !staffId ||
-        !subjectId ||
-        !classId
-    ) {
-        return null;
-    }
-
-    // -------------------------------------------------
-    // STAFF_SUBJECTS
-    // -------------------------------------------------
-
-    const [staffSubjectRows] =
-        await db.query(
-            `
-            SELECT
-                staff_subject_id,
-                staff_id,
-                subject_id,
-                class_id
-            FROM staff_subjects
-            WHERE staff_id = ?
-              AND subject_id = ?
-              AND class_id = ?
-            LIMIT 1
-            `,
-            [
-                staffId,
-                subjectId,
-                classId
-            ]
-        );
-
-    if (
-        staffSubjectRows.length > 0
-    ) {
-        return {
-            source: "staff_subjects",
-            allocation:
-                staffSubjectRows[0]
-        };
-    }
-
-    // -------------------------------------------------
-    // SUBJECT_ALLOCATIONS
-    // -------------------------------------------------
-
-    const [allocationRows] =
-        await db.query(
-            `
-            SELECT
-                allocation_id,
-                staff_id,
-                subject_id,
-                class_id,
-                academic_year,
-                department,
-                year,
-                semester
-            FROM subject_allocations
-            WHERE staff_id = ?
-              AND subject_id = ?
-              AND class_id = ?
-            ORDER BY allocation_id DESC
-            LIMIT 1
-            `,
-            [
-                staffId,
-                subjectId,
-                classId
-            ]
-        );
-
-    if (
-        allocationRows.length > 0
-    ) {
-        return {
-            source:
-                "subject_allocations",
-            allocation:
-                allocationRows[0]
-        };
-    }
-
-    return null;
-};
-
-
-// =====================================================
-// HELPER: GET SESSION CLASS / ALLOCATION
-// =====================================================
-
-const getSessionAllocation = async (
-    sessionId
-) => {
-    const [rows] = await db.query(
-        `
-        SELECT
-            ats.session_id,
-            ats.subject_id,
-            ats.staff_id,
-            ats.class_id AS session_class_id,
-            ats.academic_year AS session_academic_year,
-            ats.session_date,
-            ats.start_time,
-            ats.end_time,
-            ats.qr_token,
-            ats.qr_expires_at,
-
-            UNIX_TIMESTAMP(
-                ats.qr_expires_at
-            ) * 1000 AS qr_expires_at_ms,
-
-            ats.status AS session_status,
-
-            s.subject_code,
-            s.subject_name,
-            s.department AS subject_department,
-
-            sa.allocation_id,
-            sa.class_id,
-            sa.academic_year,
-            sa.department AS allocation_department,
-            sa.year AS allocation_year,
-            sa.semester,
-
-            c.year AS class_year,
-            c.section AS class_section,
-            c.department_id AS class_department_id,
-
-            d.department_name,
-            d.department_code
-
-        FROM attendance_sessions ats
-
-        LEFT JOIN subjects s
-            ON s.subject_id =
-               ats.subject_id
-
-        LEFT JOIN subject_allocations sa
-            ON sa.subject_id =
-               ats.subject_id
-
-           AND sa.staff_id =
-               ats.staff_id
-
-           AND (
-                sa.class_id =
-                ats.class_id
-
-                OR (
-                    sa.class_id IS NULL
-                    AND ats.class_id IS NULL
-                )
-           )
-
-           AND (
-                ats.academic_year IS NULL
-
-                OR sa.academic_year =
-                   ats.academic_year
-
-                OR sa.academic_year IS NULL
-           )
-
-        LEFT JOIN classes c
-            ON c.class_id =
-               ats.class_id
-
-        LEFT JOIN departments d
-            ON d.department_id =
-               c.department_id
-
-        WHERE ats.session_id = ?
-
-        ORDER BY
-            CASE
-                WHEN sa.class_id =
-                     ats.class_id
-                THEN 0
-                ELSE 1
-            END,
-
-            sa.allocation_id DESC
-
-        LIMIT 1
-        `,
-        [sessionId]
-    );
-
-    if (rows.length === 0) {
-        return null;
-    }
-
-    return rows[0];
-};
-
-
-// =====================================================
-// HELPER: VALIDATE STUDENT FOR SESSION
-// =====================================================
-
-const validateStudentForSession = async (
-    sessionId,
-    studentId
-) => {
-    const allocation =
-        await getSessionAllocation(
-            sessionId
-        );
-
-    if (!allocation) {
-        return {
-            valid: false,
-            status: 404,
-            message:
-                "Attendance session or class allocation not found"
-        };
-    }
-
-    const classId =
-        allocation.session_class_id ||
-        allocation.class_id;
-
-    if (!classId) {
-        return {
-            valid: false,
-            status: 400,
-            message:
-                "This attendance session is not linked to a class"
-        };
-    }
-
-    const [students] =
-        await db.query(
-            `
-            SELECT
-                student_id,
-                user_id,
-                register_number,
-                name,
-                email,
-                department,
-                year,
-                section
-            FROM students
-            WHERE student_id = ?
-            LIMIT 1
-            `,
-            [studentId]
-        );
-
-    if (students.length === 0) {
-        return {
-            valid: false,
-            status: 404,
-            message:
-                "Student not found"
-        };
-    }
-
-    const student =
-        students[0];
-
-    const expectedDepartment =
-        allocation.department_name ||
-        allocation.allocation_department ||
-        allocation.subject_department ||
-        null;
-
-    const expectedYear =
-        allocation.class_year ??
-        allocation.allocation_year ??
-        null;
-
-    const expectedSection =
-        allocation.class_section ??
-        null;
-
-    const studentDepartment =
-        String(
-            student.department ?? ""
-        )
-            .trim()
-            .toLowerCase();
-
-    const expectedDepartmentNormalized =
-        String(
-            expectedDepartment ?? ""
-        )
-            .trim()
-            .toLowerCase();
-
-    const studentYear =
-        student.year === null ||
-        student.year === undefined
-            ? null
-            : Number(student.year);
-
-    const expectedYearNumber =
-        expectedYear === null ||
-        expectedYear === undefined
-            ? null
-            : Number(expectedYear);
-
-    const studentSection =
-        String(
-            student.section ?? ""
-        )
-            .trim()
-            .toLowerCase();
-
-    const expectedSectionNormalized =
-        String(
-            expectedSection ?? ""
-        )
-            .trim()
-            .toLowerCase();
-
-    // -------------------------------------------------
-    // DEPARTMENT
-    // -------------------------------------------------
-
-    if (
-        expectedDepartmentNormalized &&
-        studentDepartment !==
-            expectedDepartmentNormalized
-    ) {
-        return {
-            valid: false,
-            status: 403,
-            message:
-                "Student does not belong to the allocated department",
-            student,
-            allocation
-        };
-    }
-
-    // -------------------------------------------------
-    // YEAR
-    // -------------------------------------------------
-
-    if (
-        expectedYearNumber !== null &&
-        (
-            studentYear === null ||
-            studentYear !==
-                expectedYearNumber
-        )
-    ) {
-        return {
-            valid: false,
-            status: 403,
-            message:
-                "Student does not belong to the allocated class year",
-            student,
-            allocation
-        };
-    }
-
-    // -------------------------------------------------
-    // SECTION
-    // -------------------------------------------------
-
-    if (
-        expectedSectionNormalized &&
-        studentSection !==
-            expectedSectionNormalized
-    ) {
-        return {
-            valid: false,
-            status: 403,
-            message:
-                "Student does not belong to the allocated class section",
-            student,
-            allocation
-        };
-    }
-
-    return {
-        valid: true,
-        student,
-        allocation
-    };
-};
-
-
-// =====================================================
-// HELPER: GET LOGGED-IN STUDENT
-// =====================================================
-
-const getLoggedInStudent = async (req) => {
-    const user = req.user || {};
-
-    // -------------------------------------------------
-    // 1. Middleware student_id
-    // -------------------------------------------------
-
-    if (
-        user.student_id !== undefined &&
-        user.student_id !== null
-    ) {
-        const [rows] =
-            await db.query(
-                `
-                SELECT
-                    student_id,
-                    user_id,
-                    register_number,
-                    name,
-                    email,
-                    department,
-                    year,
-                    section
-                FROM students
-                WHERE student_id = ?
-                LIMIT 1
-                `,
-                [user.student_id]
-            );
-
-        if (rows.length > 0) {
+        if (rows.length) {
             return rows[0];
         }
     }
 
     // -------------------------------------------------
-    // 2. JWT user_id
+    // Fallback using session subject/class
     // -------------------------------------------------
 
-    const userId =
-        user.user_id ??
-        user.id ??
-        user.userId;
+    const [rows] = await db.query(
+        `
+        SELECT
+            sa.*,
 
-    if (
-        userId === undefined ||
-        userId === null
-    ) {
-        return null;
-    }
+            sub.subject_id AS joined_subject_id,
+            sub.subject_code,
+            sub.subject_name,
 
-    const [rows] =
-        await db.query(
-            `
-            SELECT
-                student_id,
-                user_id,
-                register_number,
-                name,
-                email,
-                department,
-                year,
-                section
-            FROM students
-            WHERE user_id = ?
-            LIMIT 1
-            `,
-            [userId]
-        );
+            c.class_id AS joined_class_id,
+            c.year AS class_year,
+            c.section AS class_section,
 
-    if (rows.length === 0) {
-        return null;
-    }
+            d.department_id,
+            d.department_name
 
-    return rows[0];
-};
+        FROM subject_allocations sa
 
+        LEFT JOIN subjects sub
+            ON sub.subject_id = sa.subject_id
 
-// =====================================================
-// HELPER: EXTRACT QR TOKEN
-// =====================================================
+        LEFT JOIN classes c
+            ON c.class_id = sa.class_id
 
-const extractQRToken = (value) => {
-    if (
-        value === undefined ||
-        value === null
-    ) {
-        return null;
-    }
+        LEFT JOIN departments d
+            ON d.department_id = c.department_id
 
-    const raw =
-        String(value).trim();
+        WHERE
+            sa.subject_id = ?
+            AND sa.class_id = ?
 
-    if (!raw) {
-        return null;
-    }
+        ORDER BY sa.allocation_id DESC
 
-    // -------------------------------------------------
-    // RAW TOKEN
-    // -------------------------------------------------
+        LIMIT 1
+        `,
+        [
+            session.subject_id,
+            session.class_id,
+        ]
+    );
 
-    if (
-        !raw.startsWith("{") &&
-        !raw.startsWith("[")
-    ) {
-        return raw;
-    }
-
-    // -------------------------------------------------
-    // JSON QR DATA
-    // -------------------------------------------------
-
-    try {
-        const parsed =
-            JSON.parse(raw);
-
-        if (
-            parsed &&
-            typeof parsed === "object" &&
-            !Array.isArray(parsed)
-        ) {
-            const token =
-                parsed.qr_token ??
-                parsed.qrToken ??
-                parsed.token;
-
-            if (
-                token !== undefined &&
-                token !== null &&
-                String(token).trim()
-            ) {
-                return String(token).trim();
-            }
-        }
-    } catch (error) {
-        return raw;
-    }
-
-    return null;
-};
+    return rows.length
+        ? rows[0]
+        : null;
+}
 
 
 // =====================================================
-// GET MY SUBJECT + CLASS ALLOCATIONS
-// GET /api/attendance/my-subject-classes
+// VALIDATE STUDENT FOR SESSION
 // =====================================================
 
-const getMySubjectClasses = async (
-    req,
-    res
-) => {
-    try {
-        const staffId =
-            await getLoggedInStaffId(
-                req
-            );
-
-        if (!staffId) {
-            return res.status(403).json({
-                success: false,
-                message:
-                    "Staff account not found for the logged-in user"
-            });
-        }
-
-        const [rows] =
-            await db.query(
-                `
-                SELECT DISTINCT
-
-                    ss.subject_id,
-                    ss.class_id,
-
-                    s.subject_code,
-                    s.subject_name,
-
-                    c.department_id,
-                    c.year,
-                    c.section,
-
-                    d.department_name,
-                    d.department_code,
-
-                    'staff_subjects'
-                        AS allocation_source
-
-                FROM staff_subjects ss
-
-                INNER JOIN subjects s
-                    ON s.subject_id =
-                       ss.subject_id
-
-                INNER JOIN classes c
-                    ON c.class_id =
-                       ss.class_id
-
-                INNER JOIN departments d
-                    ON d.department_id =
-                       c.department_id
-
-                WHERE ss.staff_id = ?
-
-                UNION
-
-                SELECT DISTINCT
-
-                    sa.subject_id,
-                    sa.class_id,
-
-                    s.subject_code,
-                    s.subject_name,
-
-                    c.department_id,
-                    c.year,
-                    c.section,
-
-                    d.department_name,
-                    d.department_code,
-
-                    'subject_allocations'
-                        AS allocation_source
-
-                FROM subject_allocations sa
-
-                INNER JOIN subjects s
-                    ON s.subject_id =
-                       sa.subject_id
-
-                INNER JOIN classes c
-                    ON c.class_id =
-                       sa.class_id
-
-                INNER JOIN departments d
-                    ON d.department_id =
-                       c.department_id
-
-                WHERE sa.staff_id = ?
-                  AND sa.class_id IS NOT NULL
-
-                ORDER BY
-                    department_name ASC,
-                    year ASC,
-                    section ASC,
-                    subject_name ASC
-                `,
-                [
-                    staffId,
-                    staffId
-                ]
-            );
-
-        return res.status(200).json({
-            success: true,
-            staff_id: staffId,
-            count: rows.length,
-            allocations: rows
-        });
-
-    } catch (error) {
-        console.error(
-            "Get My Subject Classes Error:",
-            error
-        );
-
-        return res.status(500).json({
-            success: false,
-            message:
-                "Failed to fetch assigned subjects and classes",
-            error: error.message
-        });
-    }
-};
-
-
-// =====================================================
-// GET STUDENTS FOR MY ASSIGNED SUBJECT + CLASS
-// GET /api/attendance/my-subject-students
-// =====================================================
-
-const getMySubjectStudents = async (
-    req,
-    res
-) => {
-    try {
-        const {
-            subject_id,
-            class_id
-        } = req.query;
-
-        if (
-            !subject_id ||
-            !class_id
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "subject_id and class_id are required"
-            });
-        }
-
-        const staffId =
-            await getLoggedInStaffId(
-                req
-            );
-
-        if (!staffId) {
-            return res.status(403).json({
-                success: false,
-                message:
-                    "Staff account not found for the logged-in user"
-            });
-        }
-
-        const allocation =
-            await checkStaffSubjectClassAllocation(
-                staffId,
-                Number(subject_id),
-                Number(class_id)
-            );
-
-        if (!allocation) {
-            return res.status(403).json({
-                success: false,
-                message:
-                    "You are not assigned to this subject and class"
-            });
-        }
-
-        const [classes] =
-            await db.query(
-                `
-                SELECT
-                    c.class_id,
-                    c.department_id,
-                    c.year,
-                    c.section,
-
-                    d.department_name,
-                    d.department_code
-
-                FROM classes c
-
-                INNER JOIN departments d
-                    ON d.department_id =
-                       c.department_id
-
-                WHERE c.class_id = ?
-
-                LIMIT 1
-                `,
-                [class_id]
-            );
-
-        if (classes.length === 0) {
-            return res.status(404).json({
-                success: false,
-                message:
-                    "Class not found"
-            });
-        }
-
-        const selectedClass =
-            classes[0];
-
-        const [students] =
-            await db.query(
-                `
-                SELECT
-
-                    st.student_id,
-                    st.user_id,
-                    st.register_number,
-                    st.name,
-                    st.email,
-                    st.department,
-                    st.year,
-                    st.section,
-
-                    d.department_id,
-                    d.department_name,
-                    d.department_code,
-
-                    c.class_id
-
-                FROM students st
-
-                INNER JOIN departments d
-                    ON LOWER(
-                        TRIM(st.department)
-                    ) =
-                    LOWER(
-                        TRIM(d.department_name)
-                    )
-
-                INNER JOIN classes c
-                    ON c.department_id =
-                       d.department_id
-
-                   AND c.year =
-                       st.year
-
-                   AND LOWER(
-                        TRIM(c.section)
-                   ) =
-                       LOWER(
-                        TRIM(st.section)
-                   )
-
-                WHERE c.class_id = ?
-
-                ORDER BY
-                    st.name ASC
-                `,
-                [class_id]
-            );
-
-        return res.status(200).json({
-            success: true,
-
-            staff_id:
-                staffId,
-
-            subject_id:
-                Number(subject_id),
-
-            class_id:
-                Number(class_id),
-
-            subject_allocation:
-                allocation,
-
-            class:
-                selectedClass,
-
-            count:
-                students.length,
-
-            students
-        });
-
-    } catch (error) {
-        console.error(
-            "Get My Subject Students Error:",
-            error
-        );
-
-        return res.status(500).json({
-            success: false,
-            message:
-                "Failed to fetch assigned class students",
-            error: error.message
-        });
-    }
-};
-
-
-// =====================================================
-// GET ALL ATTENDANCE
-// GET /api/attendance
-// =====================================================
-
-const getAttendance = async (
-    req,
-    res
-) => {
-    try {
-        const [rows] =
-            await db.query(
-                `
-                SELECT
-
-                    a.attendance_id,
-                    a.session_id,
-                    a.student_id,
-                    a.scanned_at,
-                    a.status,
-
-                    st.register_number,
-                    st.name AS student_name,
-                    st.email AS student_email,
-                    st.department,
-                    st.year,
-                    st.section,
-
-                    ats.session_date,
-                    ats.start_time,
-                    ats.end_time,
-                    ats.status AS session_status,
-                    ats.class_id AS session_class_id,
-                    ats.academic_year AS session_academic_year,
-
-                    s.subject_id,
-                    s.subject_code,
-                    s.subject_name,
-
-                    staff.staff_id,
-                    staff.staff_code,
-                    staff.name AS staff_name,
-
-                    sa.allocation_id,
-                    sa.class_id,
-                    sa.academic_year,
-                    sa.department
-                        AS allocation_department,
-                    sa.year AS allocation_year,
-                    sa.semester,
-
-                    c.year AS class_year,
-                    c.section AS class_section,
-                    c.department_id
-                        AS class_department_id,
-
-                    d.department_name,
-                    d.department_code
-
-                FROM attendance a
-
-                LEFT JOIN students st
-                    ON st.student_id =
-                       a.student_id
-
-                LEFT JOIN attendance_sessions ats
-                    ON ats.session_id =
-                       a.session_id
-
-                LEFT JOIN subjects s
-                    ON s.subject_id =
-                       ats.subject_id
-
-                LEFT JOIN staff
-                    ON staff.staff_id =
-                       ats.staff_id
-
-                LEFT JOIN subject_allocations sa
-                    ON sa.subject_id =
-                       ats.subject_id
-
-                   AND sa.staff_id =
-                       ats.staff_id
-
-                   AND (
-                        sa.class_id =
-                        ats.class_id
-
-                        OR (
-                            sa.class_id IS NULL
-                            AND ats.class_id IS NULL
-                        )
-                   )
-
-                LEFT JOIN classes c
-                    ON c.class_id =
-                       ats.class_id
-
-                LEFT JOIN departments d
-                    ON d.department_id =
-                       c.department_id
-
-                ORDER BY
-
-                    ats.session_date DESC,
-                    ats.start_time DESC,
-                    a.scanned_at DESC,
-                    a.attendance_id DESC
-                `
-            );
-
-        return res.status(200).json({
-            success: true,
-            count: rows.length,
-            attendance: rows
-        });
-
-    } catch (error) {
-        console.error(
-            "Get Attendance Error:",
-            error
-        );
-
-        return res.status(500).json({
-            success: false,
-            message:
-                "Failed to fetch attendance",
-            error: error.message
-        });
-    }
-};
-
-
-// =====================================================
-// GET ATTENDANCE BY ID
-// GET /api/attendance/:id
-// =====================================================
-
-const getAttendanceById = async (
-    req,
-    res
-) => {
-    try {
-        const { id } =
-            req.params;
-
-        if (
-            !id ||
-            isNaN(Number(id))
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Valid attendance ID is required"
-            });
-        }
-
-        const [rows] =
-            await db.query(
-                `
-                SELECT
-
-                    a.attendance_id,
-                    a.session_id,
-                    a.student_id,
-                    a.scanned_at,
-                    a.status,
-
-                    st.register_number,
-                    st.name AS student_name,
-                    st.email AS student_email,
-                    st.department,
-                    st.year,
-                    st.section,
-
-                    ats.session_date,
-                    ats.start_time,
-                    ats.end_time,
-                    ats.status AS session_status,
-                    ats.class_id AS session_class_id,
-                    ats.academic_year AS session_academic_year,
-
-                    s.subject_id,
-                    s.subject_code,
-                    s.subject_name,
-
-                    staff.staff_id,
-                    staff.staff_code,
-                    staff.name AS staff_name,
-
-                    c.year AS class_year,
-                    c.section AS class_section,
-                    c.department_id
-                        AS class_department_id,
-
-                    d.department_name,
-                    d.department_code
-
-                FROM attendance a
-
-                LEFT JOIN students st
-                    ON st.student_id =
-                       a.student_id
-
-                LEFT JOIN attendance_sessions ats
-                    ON ats.session_id =
-                       a.session_id
-
-                LEFT JOIN subjects s
-                    ON s.subject_id =
-                       ats.subject_id
-
-                LEFT JOIN staff
-                    ON staff.staff_id =
-                       ats.staff_id
-
-                LEFT JOIN classes c
-                    ON c.class_id =
-                       ats.class_id
-
-                LEFT JOIN departments d
-                    ON d.department_id =
-                       c.department_id
-
-                WHERE a.attendance_id = ?
-
-                LIMIT 1
-                `,
-                [id]
-            );
-
-        if (rows.length === 0) {
-            return res.status(404).json({
-                success: false,
-                message:
-                    "Attendance record not found"
-            });
-        }
-
-        return res.status(200).json({
-            success: true,
-            attendance:
-                rows[0]
-        });
-
-    } catch (error) {
-        console.error(
-            "Get Attendance By ID Error:",
-            error
-        );
-
-        return res.status(500).json({
-            success: false,
-            message:
-                "Failed to fetch attendance record",
-            error: error.message
-        });
-    }
-};
-
-
-// =====================================================
-// GET ATTENDANCE BY SESSION
-// GET /api/attendance/session/:sessionId
-// =====================================================
-
-const getAttendanceBySession = async (
-    req,
-    res
-) => {
-    try {
-        const {
-            sessionId
-        } = req.params;
-
-        if (
-            !sessionId ||
-            isNaN(Number(sessionId))
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Valid session ID is required"
-            });
-        }
-
-        const numericSessionId =
-            Number(sessionId);
-
-        const allocation =
-            await getSessionAllocation(
-                numericSessionId
-            );
-
-        if (!allocation) {
-            return res.status(404).json({
-                success: false,
-                message:
-                    "Attendance session not found"
-            });
-        }
-
-        const [rows] =
-            await db.query(
-                `
-                SELECT
-
-                    a.attendance_id,
-                    a.session_id,
-                    a.student_id,
-                    a.scanned_at,
-                    a.status,
-
-                    st.register_number,
-                    st.name AS student_name,
-                    st.email AS student_email,
-                    st.department,
-                    st.year,
-                    st.section
-
-                FROM attendance a
-
-                LEFT JOIN students st
-                    ON st.student_id =
-                       a.student_id
-
-                WHERE a.session_id = ?
-
-                ORDER BY
-                    a.scanned_at ASC,
-                    st.name ASC
-                `,
-                [numericSessionId]
-            );
-
-        const [summary] =
-            await db.query(
-                `
-                SELECT
-
-                    COUNT(*) AS total_attendance,
-
-                    SUM(
-                        CASE
-                            WHEN UPPER(status) =
-                                 'PRESENT'
-                            THEN 1
-                            ELSE 0
-                        END
-                    ) AS present_count,
-
-                    SUM(
-                        CASE
-                            WHEN UPPER(status) =
-                                 'LATE'
-                            THEN 1
-                            ELSE 0
-                        END
-                    ) AS late_count
-
-                FROM attendance
-
-                WHERE session_id = ?
-                `,
-                [numericSessionId]
-            );
-
-        let classStudentCount = 0;
-
-        const sessionClassId =
-            allocation.session_class_id ||
-            allocation.class_id;
-
-        if (sessionClassId) {
-            const [classStudents] =
-                await db.query(
-                    `
-                    SELECT
-                        COUNT(*) AS total_students
-
-                    FROM students st
-
-                    INNER JOIN classes c
-                        ON c.class_id = ?
-
-                    INNER JOIN departments d
-                        ON d.department_id =
-                           c.department_id
-
-                    WHERE st.year = c.year
-
-                      AND LOWER(
-                            TRIM(st.section)
-                          ) =
-                          LOWER(
-                            TRIM(c.section)
-                          )
-
-                      AND LOWER(
-                            TRIM(st.department)
-                          ) =
-                          LOWER(
-                            TRIM(d.department_name)
-                          )
-                    `,
-                    [sessionClassId]
-                );
-
-            classStudentCount =
-                Number(
-                    classStudents[0]
-                        ?.total_students || 0
-                );
-        }
-
-        const attendanceSummary =
-            summary[0] || {};
-
-        const presentCount =
-            Number(
-                attendanceSummary.present_count ||
-                0
-            );
-
-        const lateCount =
-            Number(
-                attendanceSummary.late_count ||
-                0
-            );
-
-        const totalAttendance =
-            Number(
-                attendanceSummary.total_attendance ||
-                0
-            );
-
-        const absentCount =
-            Math.max(
-                classStudentCount -
-                    totalAttendance,
-                0
-            );
-
-        const percentage =
-            classStudentCount > 0
-                ? Number(
-                      (
-                          (
-                              totalAttendance /
-                              classStudentCount
-                          ) *
-                          100
-                      ).toFixed(2)
-                  )
-                : 0;
-
-        return res.status(200).json({
-            success: true,
-
-            session_id:
-                numericSessionId,
-
-            subject_id:
-                allocation.subject_id,
-
-            subject_code:
-                allocation.subject_code,
-
-            subject_name:
-                allocation.subject_name,
-
-            staff_id:
-                allocation.staff_id,
-
-            class_id:
-                sessionClassId,
-
-            class_year:
-                allocation.class_year,
-
-            class_section:
-                allocation.class_section,
-
-            department:
-                allocation.department_name ||
-                allocation.allocation_department ||
-                allocation.subject_department ||
-                null,
-
-            department_code:
-                allocation.department_code ||
-                null,
-
-            academic_year:
-                allocation.session_academic_year ||
-                allocation.academic_year ||
-                null,
-
-            semester:
-                allocation.semester,
-
-            total_students:
-                classStudentCount,
-
-            count:
-                rows.length,
-
-            attendance:
-                rows,
-
-            summary: {
-                total_attendance:
-                    totalAttendance,
-
-                present_count:
-                    presentCount,
-
-                late_count:
-                    lateCount,
-
-                absent_count:
-                    absentCount,
-
-                total_students:
-                    classStudentCount,
-
-                percentage:
-                    percentage
-            }
-        });
-
-    } catch (error) {
-        console.error(
-            "Get Attendance By Session Error:",
-            error
-        );
-
-        return res.status(500).json({
-            success: false,
-            message:
-                "Failed to fetch session attendance",
-            error: error.message
-        });
-    }
-};
-
-
-// =====================================================
-// GET LIVE ATTENDANCE COUNT BY SESSION
-// GET /api/attendance/session/:sessionId/count
-// =====================================================
-//
-// This endpoint is used by Staff Dashboard.
-//
-// Student QR scan:
-//
-// POST /api/attendance/scan
-//
-// saves into:
-//
-// attendance
-//
-// Staff Dashboard:
-//
-// GET /api/attendance/session/:sessionId/count
-//
-// reads from:
-//
-// attendance
-//
-// =====================================================
-
-const getAttendanceCountBySession = async (
-    req,
-    res
-) => {
-    try {
-        const {
-            sessionId
-        } = req.params;
-
-        if (
-            !sessionId ||
-            isNaN(Number(sessionId))
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Valid session ID is required"
-            });
-        }
-
-        const numericSessionId =
-            Number(sessionId);
-
-        // =================================================
-        // GET SESSION + CLASS
-        // =================================================
-
-        const allocation =
-            await getSessionAllocation(
-                numericSessionId
-            );
-
-        if (!allocation) {
-            return res.status(404).json({
-                success: false,
-                message:
-                    "Attendance session not found"
-            });
-        }
-
-        const sessionClassId =
-            allocation.session_class_id ||
-            allocation.class_id;
-
-        if (!sessionClassId) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Attendance session is not linked to a class"
-            });
-        }
-
-        // =================================================
-        // GET TOTAL STUDENTS
-        // =================================================
-
-        const [classStudents] =
-            await db.query(
-                `
-                SELECT
-                    COUNT(*) AS total_students
-
-                FROM students st
-
-                INNER JOIN classes c
-                    ON c.class_id = ?
-
-                INNER JOIN departments d
-                    ON d.department_id =
-                       c.department_id
-
-                WHERE st.year = c.year
-
-                  AND LOWER(
-                        TRIM(st.section)
-                      ) =
-                      LOWER(
-                        TRIM(c.section)
-                      )
-
-                  AND LOWER(
-                        TRIM(st.department)
-                      ) =
-                      LOWER(
-                        TRIM(d.department_name)
-                      )
-                `,
-                [sessionClassId]
-            );
-
-        const totalStudents =
-            Number(
-                classStudents[0]
-                    ?.total_students || 0
-            );
-
-        // =================================================
-        // GET ATTENDANCE COUNTS
-        // =================================================
-        //
-        // DISTINCT student_id prevents accidental
-        // duplicate counting.
-        //
-        // =================================================
-
-        const [attendanceRows] =
-            await db.query(
-                `
-                SELECT
-
-                    COUNT(
-                        DISTINCT student_id
-                    ) AS total_attendance,
-
-                    COUNT(
-                        DISTINCT CASE
-                            WHEN UPPER(status) =
-                                 'PRESENT'
-                            THEN student_id
-                        END
-                    ) AS present_count,
-
-                    COUNT(
-                        DISTINCT CASE
-                            WHEN UPPER(status) =
-                                 'LATE'
-                            THEN student_id
-                        END
-                    ) AS late_count
-
-                FROM attendance
-
-                WHERE session_id = ?
-                `,
-                [numericSessionId]
-            );
-
-        const attendance =
-            attendanceRows[0] || {};
-
-        const totalAttendance =
-            Number(
-                attendance.total_attendance || 0
-            );
-
-        const presentCount =
-            Number(
-                attendance.present_count || 0
-            );
-
-        const lateCount =
-            Number(
-                attendance.late_count || 0
-            );
-
-        const absentCount =
-            Math.max(
-                totalStudents -
-                    totalAttendance,
-                0
-            );
-
-        const percentage =
-            totalStudents > 0
-                ? Number(
-                      (
-                          (
-                              totalAttendance /
-                              totalStudents
-                          ) *
-                          100
-                      ).toFixed(2)
-                  )
-                : 0;
-
-        // =================================================
-        // RESPONSE
-        // =================================================
-
-        return res.status(200).json({
-            success: true,
-
-            session_id:
-                numericSessionId,
-
-            subject_id:
-                allocation.subject_id,
-
-            subject_code:
-                allocation.subject_code,
-
-            subject_name:
-                allocation.subject_name,
-
-            staff_id:
-                allocation.staff_id,
-
-            class_id:
-                sessionClassId,
-
-            class_year:
-                allocation.class_year,
-
-            class_section:
-                allocation.class_section,
-
-            department:
-                allocation.department_name ||
-                allocation.allocation_department ||
-                allocation.subject_department ||
-                null,
-
-            department_code:
-                allocation.department_code ||
-                null,
-
-            academic_year:
-                allocation.session_academic_year ||
-                allocation.academic_year ||
-                null,
-
-            semester:
-                allocation.semester ||
-                null,
-
-            total_students:
-                totalStudents,
-
-            total_attendance:
-                totalAttendance,
-
-            present_count:
-                presentCount,
-
-            late_count:
-                lateCount,
-
-            absent_count:
-                absentCount,
-
-            percentage:
-                percentage,
-
-            summary: {
-                total_students:
-                    totalStudents,
-
-                total_attendance:
-                    totalAttendance,
-
-                present_count:
-                    presentCount,
-
-                late_count:
-                    lateCount,
-
-                absent_count:
-                    absentCount,
-
-                percentage:
-                    percentage
-            }
-        });
-
-    } catch (error) {
-        console.error(
-            "Get Attendance Count By Session Error:",
-            error
-        );
-
-        return res.status(500).json({
-            success: false,
-            message:
-                "Failed to fetch live attendance count",
-            error:
-                error.message
-        });
-    }
-};
-
-
-// =====================================================
-// GET ATTENDANCE BY STUDENT
-// GET /api/attendance/student/:studentId
-// =====================================================
-
-const getAttendanceByStudent = async (
-    req,
-    res
-) => {
-    try {
-        const {
-            studentId
-        } = req.params;
-
-        if (
-            !studentId ||
-            isNaN(Number(studentId))
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Valid student ID is required"
-            });
-        }
-
-        const [rows] =
-            await db.query(
-                `
-                SELECT
-
-                    a.attendance_id,
-                    a.session_id,
-                    a.student_id,
-                    a.scanned_at,
-                    a.status,
-
-                    ats.session_date,
-                    ats.start_time,
-                    ats.end_time,
-                    ats.class_id
-                        AS session_class_id,
-                    ats.academic_year
-                        AS session_academic_year,
-
-                    s.subject_id,
-                    s.subject_code,
-                    s.subject_name,
-
-                    staff.staff_id,
-                    staff.staff_code,
-                    staff.name AS staff_name,
-
-                    sa.allocation_id,
-                    sa.class_id,
-                    sa.academic_year,
-                    sa.department
-                        AS allocation_department,
-                    sa.year AS allocation_year,
-                    sa.semester,
-
-                    c.year AS class_year,
-                    c.section AS class_section,
-                    c.department_id
-                        AS class_department_id,
-
-                    d.department_name,
-                    d.department_code
-
-                FROM attendance a
-
-                LEFT JOIN attendance_sessions ats
-                    ON ats.session_id =
-                       a.session_id
-
-                LEFT JOIN subjects s
-                    ON s.subject_id =
-                       ats.subject_id
-
-                LEFT JOIN staff
-                    ON staff.staff_id =
-                       ats.staff_id
-
-                LEFT JOIN subject_allocations sa
-                    ON sa.subject_id =
-                       ats.subject_id
-
-                   AND sa.staff_id =
-                       ats.staff_id
-
-                   AND (
-                        sa.class_id =
-                        ats.class_id
-
-                        OR (
-                            sa.class_id IS NULL
-                            AND ats.class_id IS NULL
-                        )
-                   )
-
-                LEFT JOIN classes c
-                    ON c.class_id =
-                       ats.class_id
-
-                LEFT JOIN departments d
-                    ON d.department_id =
-                       c.department_id
-
-                WHERE a.student_id = ?
-
-                ORDER BY
-
-                    ats.session_date DESC,
-                    ats.start_time DESC,
-                    a.scanned_at DESC
-                `,
-                [studentId]
-            );
-
-        return res.status(200).json({
-            success: true,
-            student_id:
-                Number(studentId),
-            count:
-                rows.length,
-            attendance:
-                rows
-        });
-
-    } catch (error) {
-        console.error(
-            "Get Attendance By Student Error:",
-            error
-        );
-
-        return res.status(500).json({
-            success: false,
-            message:
-                "Failed to fetch student attendance",
-            error:
-                error.message
-        });
-    }
-};
-
-
-// =====================================================
-// HELPER: VALIDATE STAFF OWNS SESSION
-// =====================================================
-
-const validateStaffForSession = async (
-    req,
+async function validateStudentForSession(
+    student,
     session
-) => {
-    const role =
-        String(
-            req.user?.role || ""
-        ).toUpperCase();
-
-    // -------------------------------------------------
-    // ADMIN
-    // -------------------------------------------------
-
-    if (role === "ADMIN") {
-        return {
-            valid: true
-        };
-    }
-
-    const staffId =
-        await getLoggedInStaffId(
-            req
-        );
-
-    if (!staffId) {
+) {
+    if (!student || !session) {
         return {
             valid: false,
-            status: 403,
             message:
-                "Staff account not found for the logged-in user"
-        };
-    }
-
-    if (
-        Number(session.staff_id) !==
-        Number(staffId)
-    ) {
-        return {
-            valid: false,
-            status: 403,
-            message:
-                "You are not authorized to manage attendance for this session"
+                "Student or attendance session not found.",
         };
     }
 
     const allocation =
-        await checkStaffSubjectClassAllocation(
-            staffId,
-            Number(session.subject_id),
-            Number(session.class_id)
-        );
+        await getSessionAllocation(session);
 
     if (!allocation) {
         return {
             valid: false,
-            status: 403,
             message:
-                "You are not assigned to this subject and class"
+                "Subject/class allocation for this session was not found.",
+        };
+    }
+
+    const expectedClassId =
+        session.class_id ??
+        allocation.class_id ??
+        allocation.joined_class_id;
+
+    if (
+        expectedClassId &&
+        allocation.joined_class_id &&
+        Number(expectedClassId) !==
+            Number(allocation.joined_class_id)
+    ) {
+        return {
+            valid: false,
+            message:
+                "Attendance session class is invalid.",
+        };
+    }
+
+    // -------------------------------------------------
+    // CLASS YEAR
+    // -------------------------------------------------
+
+    if (
+        allocation.class_year !== null &&
+        allocation.class_year !== undefined &&
+        student.year !== null &&
+        student.year !== undefined
+    ) {
+        if (
+            Number(student.year) !==
+            Number(allocation.class_year)
+        ) {
+            return {
+                valid: false,
+                message:
+                    "You are not assigned to this class.",
+            };
+        }
+    }
+
+    // -------------------------------------------------
+    // CLASS SECTION
+    // -------------------------------------------------
+
+    if (
+        allocation.class_section &&
+        student.section
+    ) {
+        if (
+            normalize(student.section) !==
+            normalize(allocation.class_section)
+        ) {
+            return {
+                valid: false,
+                message:
+                    "You are not assigned to this section.",
+            };
+        }
+    }
+
+    // -------------------------------------------------
+    // DEPARTMENT
+    //
+    // Student department may contain either:
+    // department name OR department code.
+    // Therefore compare both.
+    // -------------------------------------------------
+
+    if (student.department) {
+        const [departments] = await db.query(
+            `
+            SELECT
+                department_id,
+                department_name,
+                department_code
+            FROM departments
+            WHERE
+                department_id = ?
+                OR LOWER(TRIM(department_name)) = ?
+                OR LOWER(TRIM(department_code)) = ?
+            LIMIT 1
+            `,
+            [
+                allocation.department_id,
+                normalize(student.department),
+                normalize(student.department),
+            ]
+        );
+
+        if (departments.length) {
+            const department =
+                departments[0];
+
+            const studentDepartment =
+                normalize(student.department);
+
+            const validDepartment =
+                studentDepartment ===
+                    normalize(
+                        department.department_name
+                    ) ||
+                studentDepartment ===
+                    normalize(
+                        department.department_code
+                    );
+
+            if (!validDepartment) {
+                return {
+                    valid: false,
+                    message:
+                        "You are not assigned to this department.",
+                };
+            }
+        }
+    }
+
+    return {
+        valid: true,
+        allocation,
+    };
+}
+
+
+// =====================================================
+// CHECK STAFF SUBJECT/CLASS ALLOCATION
+// =====================================================
+
+async function checkStaffSubjectClassAllocation(
+    req,
+    allocationId,
+    subjectId,
+    classId
+) {
+    const staffId =
+        await getLoggedInStaffId(req);
+
+    if (!staffId) {
+        return {
+            valid: false,
+            message:
+                "Staff profile not found.",
+        };
+    }
+
+    const [rows] = await db.query(
+        `
+        SELECT
+            sa.*,
+            sub.subject_code,
+            sub.subject_name,
+            c.year AS class_year,
+            c.section AS class_section,
+            d.department_name
+
+        FROM subject_allocations sa
+
+        LEFT JOIN subjects sub
+            ON sub.subject_id = sa.subject_id
+
+        LEFT JOIN classes c
+            ON c.class_id = sa.class_id
+
+        LEFT JOIN departments d
+            ON d.department_id = c.department_id
+
+        WHERE
+            sa.allocation_id = ?
+            AND sa.staff_id = ?
+            AND sa.subject_id = ?
+            AND sa.class_id = ?
+
+        LIMIT 1
+        `,
+        [
+            allocationId,
+            staffId,
+            subjectId,
+            classId,
+        ]
+    );
+
+    if (!rows.length) {
+        return {
+            valid: false,
+            message:
+                "This subject and class are not assigned to you.",
+        };
+    }
+
+    return {
+        valid: true,
+        allocation: rows[0],
+        staffId,
+    };
+}
+
+
+// =====================================================
+// VALIDATE STAFF FOR SESSION
+// =====================================================
+
+async function validateStaffForSession(
+    req,
+    session
+) {
+    const staffId =
+        await getLoggedInStaffId(req);
+
+    if (!staffId) {
+        return {
+            valid: false,
+            message:
+                "Staff profile not found.",
+        };
+    }
+
+    // ADMIN can access any session.
+    if (getUserRole(req) === "ADMIN") {
+        return {
+            valid: true,
+            staffId,
+        };
+    }
+
+    if (
+        session.staff_id &&
+        Number(session.staff_id) !==
+            Number(staffId)
+    ) {
+        return {
+            valid: false,
+            message:
+                "This attendance session does not belong to you.",
         };
     }
 
     return {
         valid: true,
         staffId,
-        allocation
     };
-};
+}
+
+
+// =====================================================
+// GET MY SUBJECT CLASSES
+// =====================================================
+
+async function getMySubjectClasses(req, res) {
+    try {
+        const staffId =
+            await getLoggedInStaffId(req);
+
+        if (!staffId) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Staff profile not found.",
+            });
+        }
+
+        const [rows] = await db.query(
+            `
+            SELECT
+                sa.allocation_id,
+                sa.staff_id,
+                sa.subject_id,
+                sa.class_id,
+                sa.academic_year,
+                sa.semester,
+
+                sub.subject_code,
+                sub.subject_name,
+
+                c.year AS class_year,
+                c.section AS class_section,
+
+                d.department_id,
+                d.department_name
+
+            FROM subject_allocations sa
+
+            LEFT JOIN subjects sub
+                ON sub.subject_id = sa.subject_id
+
+            LEFT JOIN classes c
+                ON c.class_id = sa.class_id
+
+            LEFT JOIN departments d
+                ON d.department_id = c.department_id
+
+            WHERE sa.staff_id = ?
+
+            ORDER BY
+                sub.subject_name ASC,
+                c.year ASC,
+                c.section ASC,
+                sa.allocation_id ASC
+            `,
+            [staffId]
+        );
+
+        return res.json({
+            success: true,
+            allocations: rows,
+            subjects: rows,
+        });
+    } catch (error) {
+        console.error(
+            "getMySubjectClasses error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to load subject allocations.",
+            error: error.message,
+        });
+    }
+}
+
+
+// =====================================================
+// GET MY SUBJECT STUDENTS
+// =====================================================
+
+async function getMySubjectStudents(req, res) {
+    try {
+        const staffId =
+            await getLoggedInStaffId(req);
+
+        if (!staffId) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Staff profile not found.",
+            });
+        }
+
+        const {
+            subject_id,
+            class_id,
+            allocation_id,
+        } = req.query;
+
+        if (!class_id) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "class_id is required.",
+            });
+        }
+
+        const classId = Number(class_id);
+
+        if (!Number.isInteger(classId)) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Invalid class_id.",
+            });
+        }
+
+        let allocation;
+
+        if (allocation_id) {
+            const result =
+                await checkStaffSubjectClassAllocation(
+                    req,
+                    Number(allocation_id),
+                    Number(subject_id),
+                    classId
+                );
+
+            if (!result.valid) {
+                return res.status(403).json({
+                    success: false,
+                    message: result.message,
+                });
+            }
+
+            allocation =
+                result.allocation;
+        } else {
+            const [allocationRows] =
+                await db.query(
+                    `
+                    SELECT *
+                    FROM subject_allocations
+                    WHERE
+                        staff_id = ?
+                        AND class_id = ?
+                        ${
+                            subject_id
+                                ? "AND subject_id = ?"
+                                : ""
+                        }
+                    ORDER BY allocation_id DESC
+                    LIMIT 1
+                    `,
+                    subject_id
+                        ? [
+                              staffId,
+                              classId,
+                              Number(subject_id),
+                          ]
+                        : [
+                              staffId,
+                              classId,
+                          ]
+                );
+
+            if (!allocationRows.length) {
+                return res.status(403).json({
+                    success: false,
+                    message:
+                        "This class is not assigned to you.",
+                });
+            }
+
+            allocation =
+                allocationRows[0];
+        }
+
+        const [classRows] = await db.query(
+            `
+            SELECT
+                c.class_id,
+                c.year,
+                c.section,
+                c.department_id,
+                d.department_name,
+                d.department_code
+
+            FROM classes c
+
+            LEFT JOIN departments d
+                ON d.department_id = c.department_id
+
+            WHERE c.class_id = ?
+
+            LIMIT 1
+            `,
+            [classId]
+        );
+
+        if (!classRows.length) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Class not found.",
+            });
+        }
+
+        const classInfo =
+            classRows[0];
+
+        const [students] = await db.query(
+            `
+            SELECT
+                s.student_id,
+                s.user_id,
+                s.student_code,
+                s.name,
+                s.email,
+                s.phone,
+                s.department,
+                s.year,
+                s.section
+
+            FROM students s
+
+            WHERE
+                s.year = ?
+
+                AND LOWER(TRIM(s.section)) =
+                    LOWER(TRIM(?))
+
+                AND (
+                    LOWER(TRIM(s.department)) =
+                        LOWER(TRIM(?))
+                    OR
+                    LOWER(TRIM(s.department)) =
+                        LOWER(TRIM(?))
+                )
+
+            ORDER BY s.name ASC
+            `,
+            [
+                classInfo.year,
+                classInfo.section,
+                classInfo.department_name || "",
+                classInfo.department_code || "",
+            ]
+        );
+
+        return res.json({
+            success: true,
+            students,
+            total_students: students.length,
+            allocation,
+            class: classInfo,
+        });
+    } catch (error) {
+        console.error(
+            "getMySubjectStudents error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to load students.",
+            error: error.message,
+        });
+    }
+}
+
+
+// =====================================================
+// GET ALL ATTENDANCE
+// =====================================================
+
+async function getAttendance(req, res) {
+    try {
+        const [rows] = await db.query(
+            `
+            SELECT
+                a.*,
+
+                s.student_code,
+                s.name AS student_name,
+                s.email AS student_email,
+
+                ats.session_id,
+                ats.subject_id,
+                ats.staff_id,
+                ats.class_id,
+                ats.academic_year,
+                ats.semester,
+                ats.session_date,
+                ats.status AS session_status
+
+            FROM attendance a
+
+            LEFT JOIN students s
+                ON s.student_id = a.student_id
+
+            LEFT JOIN attendance_sessions ats
+                ON ats.session_id = a.session_id
+
+            ORDER BY
+                a.attendance_id DESC
+            `
+        );
+
+        return res.json({
+            success: true,
+            attendance: rows,
+            records: rows,
+            total: rows.length,
+        });
+    } catch (error) {
+        console.error(
+            "getAttendance error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to load attendance.",
+            error: error.message,
+        });
+    }
+}
+
+
+// =====================================================
+// GET ATTENDANCE BY ID
+// =====================================================
+
+async function getAttendanceById(req, res) {
+    try {
+        const attendanceId =
+            Number(req.params.id);
+
+        if (!Number.isInteger(attendanceId)) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Invalid attendance ID.",
+            });
+        }
+
+        const [rows] = await db.query(
+            `
+            SELECT
+                a.*,
+
+                s.student_code,
+                s.name AS student_name,
+                s.email AS student_email,
+
+                ats.subject_id,
+                ats.staff_id,
+                ats.class_id,
+                ats.academic_year,
+                ats.semester,
+                ats.session_date,
+                ats.status AS session_status
+
+            FROM attendance a
+
+            LEFT JOIN students s
+                ON s.student_id = a.student_id
+
+            LEFT JOIN attendance_sessions ats
+                ON ats.session_id = a.session_id
+
+            WHERE a.attendance_id = ?
+
+            LIMIT 1
+            `,
+            [attendanceId]
+        );
+
+        if (!rows.length) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Attendance record not found.",
+            });
+        }
+
+        return res.json({
+            success: true,
+            attendance: rows[0],
+            record: rows[0],
+        });
+    } catch (error) {
+        console.error(
+            "getAttendanceById error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to load attendance record.",
+            error: error.message,
+        });
+    }
+}
+
+
+// =====================================================
+// GET ATTENDANCE BY SESSION
+// =====================================================
+
+async function getAttendanceBySession(
+    req,
+    res
+) {
+    try {
+        const sessionId =
+            Number(req.params.sessionId);
+
+        if (!Number.isInteger(sessionId)) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Invalid session ID.",
+            });
+        }
+
+        const [sessionRows] =
+            await db.query(
+                `
+                SELECT
+                    ats.*,
+
+                    sub.subject_code,
+                    sub.subject_name,
+
+                    c.year AS class_year,
+                    c.section AS class_section,
+
+                    d.department_name,
+                    d.department_code
+
+                FROM attendance_sessions ats
+
+                LEFT JOIN subjects sub
+                    ON sub.subject_id = ats.subject_id
+
+                LEFT JOIN classes c
+                    ON c.class_id = ats.class_id
+
+                LEFT JOIN departments d
+                    ON d.department_id = c.department_id
+
+                WHERE ats.session_id = ?
+
+                LIMIT 1
+                `,
+                [sessionId]
+            );
+
+        if (!sessionRows.length) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Attendance session not found.",
+            });
+        }
+
+        const session =
+            sessionRows[0];
+
+        // -------------------------------------------------
+        // Student access
+        // -------------------------------------------------
+
+        if (
+            getUserRole(req) ===
+            "STUDENT"
+        ) {
+            const student =
+                await getLoggedInStudent(req);
+
+            if (!student) {
+                return res.status(404).json({
+                    success: false,
+                    message:
+                        "Student profile not found.",
+                });
+            }
+
+            const validation =
+                await validateStudentForSession(
+                    student,
+                    session
+                );
+
+            if (!validation.valid) {
+                return res.status(403).json({
+                    success: false,
+                    message:
+                        validation.message,
+                });
+            }
+        }
+
+        const [records] = await db.query(
+            `
+            SELECT
+                a.*,
+
+                s.student_id,
+                s.student_code,
+                s.name AS student_name,
+                s.email AS student_email,
+                s.phone AS student_phone,
+                s.department,
+                s.year,
+                s.section
+
+            FROM attendance a
+
+            INNER JOIN students s
+                ON s.student_id = a.student_id
+
+            WHERE a.session_id = ?
+
+            ORDER BY
+                s.name ASC,
+                a.attendance_id ASC
+            `,
+            [sessionId]
+        );
+
+        const [countRows] =
+            await db.query(
+                `
+                SELECT
+                    COUNT(DISTINCT a.student_id) AS attended
+                FROM attendance a
+                WHERE
+                    a.session_id = ?
+                    AND UPPER(TRIM(a.status))
+                        IN ('PRESENT', 'LATE')
+                `,
+                [sessionId]
+            );
+
+        const attended =
+            Number(
+                countRows[0]?.attended || 0
+            );
+
+        // -------------------------------------------------
+        // Calculate total students in session class
+        // -------------------------------------------------
+
+        let totalStudents = 0;
+
+        if (session.class_id) {
+            const [classRows] =
+                await db.query(
+                    `
+                    SELECT
+                        c.class_id,
+                        c.year,
+                        c.section,
+                        c.department_id,
+                        d.department_name,
+                        d.department_code
+
+                    FROM classes c
+
+                    LEFT JOIN departments d
+                        ON d.department_id =
+                           c.department_id
+
+                    WHERE c.class_id = ?
+
+                    LIMIT 1
+                    `,
+                    [session.class_id]
+                );
+
+            if (classRows.length) {
+                const c =
+                    classRows[0];
+
+                const [studentCountRows] =
+                    await db.query(
+                        `
+                        SELECT
+                            COUNT(*) AS total_students
+
+                        FROM students s
+
+                        WHERE
+                            s.year = ?
+
+                            AND LOWER(TRIM(s.section)) =
+                                LOWER(TRIM(?))
+
+                            AND (
+                                LOWER(TRIM(s.department)) =
+                                    LOWER(TRIM(?))
+
+                                OR
+
+                                LOWER(TRIM(s.department)) =
+                                    LOWER(TRIM(?))
+                            )
+                        `,
+                        [
+                            c.year,
+                            c.section,
+                            c.department_name || "",
+                            c.department_code || "",
+                        ]
+                    );
+
+                totalStudents =
+                    Number(
+                        studentCountRows[0]
+                            ?.total_students || 0
+                    );
+            }
+        }
+
+        // Fallback
+        if (!totalStudents) {
+            totalStudents =
+                Number(records.length);
+        }
+
+        const percentage =
+            totalStudents > 0
+                ? Number(
+                      (
+                          (attended /
+                              totalStudents) *
+                          100
+                      ).toFixed(2)
+                  )
+                : 0;
+
+        return res.json({
+            success: true,
+
+            session,
+
+            attendance: records,
+            records,
+
+            total_students:
+                totalStudents,
+
+            present: attended,
+
+            percentage,
+        });
+    } catch (error) {
+        console.error(
+            "getAttendanceBySession error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to load session attendance.",
+            error: error.message,
+        });
+    }
+}
+
+
+// =====================================================
+// GET LIVE ATTENDANCE COUNT BY SESSION
+// =====================================================
+
+async function getAttendanceCountBySession(
+    req,
+    res
+) {
+    try {
+        const sessionId =
+            Number(req.params.sessionId);
+
+        if (!Number.isInteger(sessionId)) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Invalid session ID.",
+            });
+        }
+
+        const [sessionRows] =
+            await db.query(
+                `
+                SELECT
+                    ats.session_id,
+                    ats.allocation_id,
+                    ats.subject_id,
+                    ats.staff_id,
+                    ats.class_id,
+                    ats.academic_year,
+                    ats.semester,
+                    ats.session_date,
+                    ats.status,
+
+                    c.year AS class_year,
+                    c.section AS class_section,
+
+                    d.department_name,
+                    d.department_code
+
+                FROM attendance_sessions ats
+
+                LEFT JOIN classes c
+                    ON c.class_id = ats.class_id
+
+                LEFT JOIN departments d
+                    ON d.department_id =
+                       c.department_id
+
+                WHERE ats.session_id = ?
+
+                LIMIT 1
+                `,
+                [sessionId]
+            );
+
+        if (!sessionRows.length) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Attendance session not found.",
+            });
+        }
+
+        const session =
+            sessionRows[0];
+
+        const validation =
+            await validateStaffForSession(
+                req,
+                session
+            );
+
+        if (!validation.valid) {
+            return res.status(403).json({
+                success: false,
+                message:
+                    validation.message,
+            });
+        }
+
+        // -------------------------------------------------
+        // PRESENT + LATE
+        // -------------------------------------------------
+
+        const [attendanceRows] =
+            await db.query(
+                `
+                SELECT
+                    COUNT(DISTINCT a.student_id)
+                        AS attended
+
+                FROM attendance a
+
+                WHERE
+                    a.session_id = ?
+
+                    AND UPPER(TRIM(a.status))
+                        IN ('PRESENT', 'LATE')
+                `,
+                [sessionId]
+            );
+
+        const present =
+            Number(
+                attendanceRows[0]?.attended || 0
+            );
+
+        // -------------------------------------------------
+        // TOTAL STUDENTS
+        // -------------------------------------------------
+
+        let totalStudents = 0;
+
+        if (session.class_id) {
+            const [studentsRows] =
+                await db.query(
+                    `
+                    SELECT
+                        COUNT(*) AS total_students
+
+                    FROM students s
+
+                    WHERE
+                        s.year = ?
+
+                        AND LOWER(TRIM(s.section)) =
+                            LOWER(TRIM(?))
+
+                        AND (
+                            LOWER(TRIM(s.department)) =
+                                LOWER(TRIM(?))
+
+                            OR
+
+                            LOWER(TRIM(s.department)) =
+                                LOWER(TRIM(?))
+                        )
+                    `,
+                    [
+                        session.class_year,
+                        session.class_section,
+                        session.department_name || "",
+                        session.department_code || "",
+                    ]
+                );
+
+            totalStudents =
+                Number(
+                    studentsRows[0]
+                        ?.total_students || 0
+                );
+        }
+
+        // -------------------------------------------------
+        // FALLBACK
+        // -------------------------------------------------
+
+        if (!totalStudents) {
+            const [allocationStudents] =
+                await db.query(
+                    `
+                    SELECT
+                        COUNT(*) AS total_students
+
+                    FROM students s
+
+                    INNER JOIN classes c
+                        ON c.class_id = ?
+
+                    LEFT JOIN departments d
+                        ON d.department_id =
+                           c.department_id
+
+                    WHERE
+                        s.year = c.year
+
+                        AND LOWER(TRIM(s.section)) =
+                            LOWER(TRIM(c.section))
+
+                        AND (
+                            LOWER(TRIM(s.department)) =
+                                LOWER(TRIM(d.department_name))
+
+                            OR
+
+                            LOWER(TRIM(s.department)) =
+                                LOWER(TRIM(d.department_code))
+                        )
+                    `,
+                    [session.class_id]
+                );
+
+            totalStudents =
+                Number(
+                    allocationStudents[0]
+                        ?.total_students || 0
+                );
+        }
+
+        const percentage =
+            totalStudents > 0
+                ? Number(
+                      (
+                          (present /
+                              totalStudents) *
+                          100
+                      ).toFixed(2)
+                  )
+                : 0;
+
+        return res.json({
+            success: true,
+
+            session_id:
+                sessionId,
+
+            session_status:
+                session.status,
+
+            present,
+
+            attended: present,
+
+            total:
+                totalStudents,
+
+            total_students:
+                totalStudents,
+
+            percentage,
+        });
+    } catch (error) {
+        console.error(
+            "getAttendanceCountBySession error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to load attendance count.",
+            error: error.message,
+        });
+    }
+}
+
+
+// =====================================================
+// GET ATTENDANCE BY STUDENT
+// =====================================================
+//
+// IMPORTANT:
+//
+// This endpoint expects students.student_id.
+//
+// Student Dashboard should preferably use /my.
+//
+// =====================================================
+
+async function getAttendanceByStudent(
+    req,
+    res
+) {
+    try {
+        let studentId =
+            Number(req.params.studentId);
+
+        if (
+            getUserRole(req) ===
+            "STUDENT"
+        ) {
+            const loggedInStudent =
+                await getLoggedInStudent(req);
+
+            if (!loggedInStudent) {
+                return res.status(404).json({
+                    success: false,
+                    message:
+                        "Student profile not found.",
+                });
+            }
+
+            // -------------------------------------------------
+            // STUDENT CAN ONLY SEE OWN ATTENDANCE
+            // -------------------------------------------------
+
+            studentId =
+                Number(
+                    loggedInStudent.student_id
+                );
+        }
+
+        if (!Number.isInteger(studentId)) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Invalid student ID.",
+            });
+        }
+
+        const [rows] = await db.query(
+            `
+            SELECT
+                a.*,
+
+                s.student_id,
+                s.student_code,
+                s.name AS student_name,
+
+                ats.subject_id,
+                ats.staff_id,
+                ats.class_id,
+                ats.allocation_id,
+                ats.academic_year,
+                ats.semester,
+                ats.session_date,
+                ats.start_time,
+                ats.end_time,
+                ats.status AS session_status
+
+            FROM attendance a
+
+            INNER JOIN students s
+                ON s.student_id = a.student_id
+
+            LEFT JOIN attendance_sessions ats
+                ON ats.session_id = a.session_id
+
+            WHERE a.student_id = ?
+
+            ORDER BY
+                COALESCE(
+                    ats.session_date,
+                    DATE(a.scanned_at)
+                ) DESC,
+                a.attendance_id DESC
+            `,
+            [studentId]
+        );
+
+        const present =
+            rows.filter(
+                (row) =>
+                    normalize(
+                        row.status
+                    ).toUpperCase() ===
+                    "PRESENT"
+            ).length;
+
+        const late =
+            rows.filter(
+                (row) =>
+                    normalize(
+                        row.status
+                    ).toUpperCase() ===
+                    "LATE"
+            ).length;
+
+        const absent =
+            rows.filter(
+                (row) =>
+                    normalize(
+                        row.status
+                    ).toUpperCase() ===
+                    "ABSENT"
+            ).length;
+
+        const attended =
+            present + late;
+
+        return res.json({
+            success: true,
+
+            student_id:
+                studentId,
+
+            attendance: rows,
+            records: rows,
+            attendance_records: rows,
+
+            total: rows.length,
+            total_students: rows.length,
+
+            present,
+            late,
+            absent,
+            attended,
+
+            percentage:
+                rows.length > 0
+                    ? Number(
+                          (
+                              (attended /
+                                  rows.length) *
+                              100
+                          ).toFixed(1)
+                      )
+                    : 0,
+        });
+    } catch (error) {
+        console.error(
+            "getAttendanceByStudent error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to load student attendance.",
+            error: error.message,
+        });
+    }
+}
+
+
+// =====================================================
+// GET MY ATTENDANCE
+// =====================================================
+//
+// NEW RELIABLE STUDENT ENDPOINT
+//
+// GET /api/attendance/my
+//
+// JWT → users.user_id → students.student_id
+//
+// The frontend no longer needs to know student_id.
+// =====================================================
+
+async function getMyAttendance(req, res) {
+    try {
+        const student =
+            await getLoggedInStudent(req);
+
+        if (!student) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Student profile not found for this login.",
+            });
+        }
+
+        const studentId =
+            Number(student.student_id);
+
+        const [rows] = await db.query(
+            `
+            SELECT
+                a.*,
+
+                s.student_id,
+                s.student_code,
+                s.name AS student_name,
+
+                ats.subject_id,
+                ats.staff_id,
+                ats.class_id,
+                ats.allocation_id,
+                ats.academic_year,
+                ats.semester,
+                ats.session_date,
+                ats.start_time,
+                ats.end_time,
+                ats.status AS session_status,
+
+                sub.subject_code,
+                sub.subject_name
+
+            FROM attendance a
+
+            INNER JOIN students s
+                ON s.student_id = a.student_id
+
+            LEFT JOIN attendance_sessions ats
+                ON ats.session_id = a.session_id
+
+            LEFT JOIN subjects sub
+                ON sub.subject_id = ats.subject_id
+
+            WHERE a.student_id = ?
+
+            ORDER BY
+                COALESCE(
+                    ats.session_date,
+                    DATE(a.scanned_at)
+                ) DESC,
+                a.attendance_id DESC
+            `,
+            [studentId]
+        );
+
+        const present =
+            rows.filter(
+                (row) =>
+                    normalize(
+                        row.status
+                    ).toUpperCase() ===
+                    "PRESENT"
+            ).length;
+
+        const late =
+            rows.filter(
+                (row) =>
+                    normalize(
+                        row.status
+                    ).toUpperCase() ===
+                    "LATE"
+            ).length;
+
+        const absent =
+            rows.filter(
+                (row) =>
+                    normalize(
+                        row.status
+                    ).toUpperCase() ===
+                    "ABSENT"
+            ).length;
+
+        const attended =
+            present + late;
+
+        const total =
+            rows.length;
+
+        const percentage =
+            total > 0
+                ? Number(
+                      (
+                          (attended /
+                              total) *
+                          100
+                      ).toFixed(1)
+                  )
+                : 0;
+
+        return res.json({
+            success: true,
+
+            student: {
+                student_id:
+                    student.student_id,
+                user_id:
+                    student.user_id,
+                student_code:
+                    student.student_code,
+                name:
+                    student.name,
+                department:
+                    student.department,
+                year:
+                    student.year,
+                section:
+                    student.section,
+            },
+
+            attendance: rows,
+            records: rows,
+            attendance_records: rows,
+
+            total,
+            present,
+            late,
+            absent,
+            attended,
+            percentage,
+        });
+    } catch (error) {
+        console.error(
+            "getMyAttendance error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to load your attendance.",
+            error: error.message,
+        });
+    }
+}
 
 
 // =====================================================
 // MARK ATTENDANCE MANUALLY
-// POST /api/attendance
 // =====================================================
 
-const markAttendance = async (
-    req,
-    res
-) => {
+async function markAttendance(req, res) {
     try {
         const {
             session_id,
             student_id,
-            status
+            status,
         } = req.body;
 
-        if (
-            !session_id ||
-            !student_id
-        ) {
+        if (!session_id) {
             return res.status(400).json({
                 success: false,
                 message:
-                    "session_id and student_id are required"
+                    "session_id is required.",
+            });
+        }
+
+        if (!student_id) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "student_id is required.",
             });
         }
 
         const attendanceStatus =
             String(
                 status || "PRESENT"
-            ).toUpperCase();
+            )
+                .trim()
+                .toUpperCase();
 
         if (
             ![
                 "PRESENT",
-                "LATE"
-            ].includes(
-                attendanceStatus
-            )
+                "LATE",
+                "ABSENT",
+            ].includes(attendanceStatus)
         ) {
             return res.status(400).json({
                 success: false,
                 message:
-                    "Status must be PRESENT or LATE"
+                    "Invalid attendance status.",
             });
         }
 
-        const [sessions] =
+        const [sessionRows] =
             await db.query(
                 `
-                SELECT
-                    session_id,
-                    subject_id,
-                    staff_id,
-                    class_id,
-                    academic_year,
-                    status,
-                    session_date,
-                    start_time,
-                    end_time
-
+                SELECT *
                 FROM attendance_sessions
-
                 WHERE session_id = ?
-
                 LIMIT 1
                 `,
                 [session_id]
             );
 
-        if (sessions.length === 0) {
+        if (!sessionRows.length) {
             return res.status(404).json({
                 success: false,
                 message:
-                    "Attendance session not found"
+                    "Attendance session not found.",
             });
         }
 
         const session =
-            sessions[0];
+            sessionRows[0];
 
-        const staffValidation =
+        const validation =
             await validateStaffForSession(
                 req,
                 session
             );
 
-        if (!staffValidation.valid) {
-            return res.status(
-                staffValidation.status
-            ).json({
-                success: false,
-                message:
-                    staffValidation.message
-            });
-        }
-
-        if (
-            String(
-                session.status
-            ).toUpperCase() !==
-            "ACTIVE"
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Attendance session is closed"
-            });
-        }
-
-        if (!session.class_id) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Attendance session is not linked to a class"
-            });
-        }
-
-        const validation =
-            await validateStudentForSession(
-                Number(session_id),
-                Number(student_id)
-            );
-
         if (!validation.valid) {
-            return res.status(
-                validation.status
-            ).json({
-                success: false,
-                message:
-                    validation.message
-            });
-        }
-
-        const [existing] =
-            await db.query(
-                `
-                SELECT
-                    attendance_id,
-                    status,
-                    scanned_at
-
-                FROM attendance
-
-                WHERE session_id = ?
-                  AND student_id = ?
-
-                LIMIT 1
-                `,
-                [
-                    session_id,
-                    student_id
-                ]
-            );
-
-        if (existing.length > 0) {
-            return res.status(409).json({
-                success: false,
-                message:
-                    "Attendance already marked for this student",
-                attendance:
-                    existing[0]
-            });
-        }
-
-        const [result] =
-            await db.query(
-                `
-                INSERT INTO attendance
-                (
-                    session_id,
-                    student_id,
-                    status
-                )
-
-                VALUES (?, ?, ?)
-                `,
-                [
-                    session_id,
-                    student_id,
-                    attendanceStatus
-                ]
-            );
-
-        const [created] =
-            await db.query(
-                `
-                SELECT
-
-                    a.attendance_id,
-                    a.session_id,
-                    a.student_id,
-                    a.scanned_at,
-                    a.status,
-
-                    st.register_number,
-                    st.name AS student_name,
-                    st.email AS student_email,
-                    st.department,
-                    st.year,
-                    st.section,
-
-                    ats.class_id,
-                    ats.academic_year,
-
-                    s.subject_code,
-                    s.subject_name,
-
-                    c.year AS class_year,
-                    c.section AS class_section,
-
-                    d.department_name,
-                    d.department_code
-
-                FROM attendance a
-
-                LEFT JOIN students st
-                    ON st.student_id =
-                       a.student_id
-
-                LEFT JOIN attendance_sessions ats
-                    ON ats.session_id =
-                       a.session_id
-
-                LEFT JOIN subjects s
-                    ON s.subject_id =
-                       ats.subject_id
-
-                LEFT JOIN classes c
-                    ON c.class_id =
-                       ats.class_id
-
-                LEFT JOIN departments d
-                    ON d.department_id =
-                       c.department_id
-
-                WHERE a.attendance_id = ?
-
-                LIMIT 1
-                `,
-                [result.insertId]
-            );
-
-        return res.status(201).json({
-            success: true,
-            message:
-                "Attendance marked successfully",
-            attendance:
-                created[0]
-        });
-
-    } catch (error) {
-        console.error(
-            "Mark Attendance Error:",
-            error
-        );
-
-        if (
-            error.code ===
-            "ER_DUP_ENTRY"
-        ) {
-            return res.status(409).json({
-                success: false,
-                message:
-                    "Attendance already exists for this student and session"
-            });
-        }
-
-        return res.status(500).json({
-            success: false,
-            message:
-                "Failed to mark attendance",
-            error:
-                error.message
-        });
-    }
-};
-
-
-// =====================================================
-// MARK ATTENDANCE USING QR TOKEN
-// POST /api/attendance/scan
-// =====================================================
-
-const scanAttendance = async (
-    req,
-    res
-) => {
-    try {
-
-        // =================================================
-        // GET QR VALUE
-        // =================================================
-
-        const {
-            qr_token
-        } = req.body || {};
-
-        if (
-            qr_token === undefined ||
-            qr_token === null ||
-            !String(qr_token).trim()
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "QR token is required"
-            });
-        }
-
-        // =================================================
-        // EXTRACT REAL TOKEN
-        // =================================================
-
-        const cleanQrToken =
-            extractQRToken(
-                qr_token
-            );
-
-        if (!cleanQrToken) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Invalid QR code format"
-            });
-        }
-
-        // =================================================
-        // GET LOGGED-IN STUDENT
-        // =================================================
-
-        const student =
-            await getLoggedInStudent(
-                req
-            );
-
-        if (!student) {
             return res.status(403).json({
                 success: false,
                 message:
-                    "Student account not found for the logged-in user"
+                    validation.message,
             });
         }
 
-        const studentId =
-            Number(
-                student.student_id
-            );
-
-        if (
-            !studentId ||
-            Number.isNaN(studentId)
-        ) {
-            return res.status(403).json({
-                success: false,
-                message:
-                    "Valid student account could not be resolved"
-            });
-        }
-
-        // =================================================
-        // FIND ACTIVE + NON-EXPIRED SESSION
-        // =================================================
-
-        const [sessions] =
+        const [studentRows] =
             await db.query(
                 `
-                SELECT
-
-                    session_id,
-                    subject_id,
-                    staff_id,
-                    class_id,
-                    academic_year,
-                    session_date,
-                    start_time,
-                    end_time,
-
-                    qr_token,
-                    qr_expires_at,
-
-                    UNIX_TIMESTAMP(
-                        qr_expires_at
-                    ) * 1000
-                        AS qr_expires_at_ms,
-
-                    status
-
-                FROM attendance_sessions
-
-                WHERE qr_token = ?
-
-                  AND status = 'ACTIVE'
-
-                  AND qr_expires_at > NOW()
-
+                SELECT *
+                FROM students
+                WHERE student_id = ?
                 LIMIT 1
                 `,
-                [cleanQrToken]
+                [student_id]
             );
 
-        // =================================================
-        // TOKEN NOT FOUND / EXPIRED
-        // =================================================
-
-        if (
-            sessions.length === 0
-        ) {
-            const [expiredRows] =
-                await db.query(
-                    `
-                    SELECT
-                        session_id,
-                        status,
-                        qr_expires_at
-
-                    FROM attendance_sessions
-
-                    WHERE qr_token = ?
-
-                    LIMIT 1
-                    `,
-                    [cleanQrToken]
-                );
-
-            if (
-                expiredRows.length > 0
-            ) {
-                const expiredSession =
-                    expiredRows[0];
-
-                if (
-                    String(
-                        expiredSession.status
-                    ).toUpperCase() !==
-                    "ACTIVE"
-                ) {
-                    return res.status(404).json({
-                        success: false,
-                        message:
-                            "Invalid or inactive QR code"
-                    });
-                }
-
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "QR code has expired"
-                });
-            }
-
+        if (!studentRows.length) {
             return res.status(404).json({
                 success: false,
                 message:
-                    "Invalid or inactive QR code"
+                    "Student not found.",
             });
         }
 
-        const session =
-            sessions[0];
+        // -------------------------------------------------
+        // Check duplicate
+        // -------------------------------------------------
 
-        // =================================================
-        // SESSION MUST HAVE CLASS
-        // =================================================
-
-        if (
-            !session.class_id
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "This attendance session is not linked to a class"
-            });
-        }
-
-        // =================================================
-        // SECOND EXPIRATION CHECK
-        // =================================================
-
-        if (
-            session.qr_expires_at_ms &&
-            Number(
-                session.qr_expires_at_ms
-            ) <= Date.now()
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "QR code has expired"
-            });
-        }
-
-        // =================================================
-        // VALIDATE STUDENT AGAINST SESSION CLASS
-        // =================================================
-
-        const validation =
-            await validateStudentForSession(
-                Number(
-                    session.session_id
-                ),
-                studentId
-            );
-
-        if (
-            !validation.valid
-        ) {
-            return res.status(
-                validation.status
-            ).json({
-                success: false,
-                message:
-                    validation.message
-            });
-        }
-
-        const allocation =
-            validation.allocation;
-
-        // =================================================
-        // CHECK DUPLICATE ATTENDANCE
-        // =================================================
-
-        const [existing] =
+        const [existingRows] =
             await db.query(
                 `
-                SELECT
-
-                    attendance_id,
-                    scanned_at,
-                    status
-
+                SELECT attendance_id
                 FROM attendance
-
-                WHERE session_id = ?
-                  AND student_id = ?
-
+                WHERE
+                    session_id = ?
+                    AND student_id = ?
                 LIMIT 1
                 `,
                 [
-                    session.session_id,
-                    studentId
+                    session_id,
+                    student_id,
                 ]
             );
 
-        if (
-            existing.length > 0
-        ) {
-            return res.status(409).json({
-                success: false,
-                message:
-                    "Attendance already marked",
-                attendance:
-                    existing[0]
-            });
-        }
+        if (existingRows.length) {
+            const attendanceId =
+                existingRows[0]
+                    .attendance_id;
 
-        // =================================================
-        // DETERMINE PRESENT / LATE
-        // =================================================
-
-        let attendanceStatus =
-            "PRESENT";
-
-        const now =
-            new Date();
-
-        const startTime =
-            String(
-                session.start_time || ""
-            ).substring(0, 8);
-
-        if (startTime) {
-            const [
-                hours,
-                minutes,
-                seconds
-            ] =
-                startTime
-                    .split(":")
-                    .map(Number);
-
-            const sessionStart =
-                new Date(now);
-
-            sessionStart.setHours(
-                hours || 0,
-                minutes || 0,
-                seconds || 0,
-                0
+            await db.query(
+                `
+                UPDATE attendance
+                SET status = ?
+                WHERE attendance_id = ?
+                `,
+                [
+                    attendanceStatus,
+                    attendanceId,
+                ]
             );
 
-            if (
-                now >
-                sessionStart
-            ) {
-                attendanceStatus =
-                    "LATE";
-            }
-        }
+            const [updatedRows] =
+                await db.query(
+                    `
+                    SELECT *
+                    FROM attendance
+                    WHERE attendance_id = ?
+                    LIMIT 1
+                    `,
+                    [attendanceId]
+                );
 
-        // =================================================
-        // INSERT ATTENDANCE
-        // =================================================
+            return res.json({
+                success: true,
+                message:
+                    "Attendance updated successfully.",
+                attendance:
+                    updatedRows[0],
+                updated: true,
+            });
+        }
 
         const [result] =
             await db.query(
@@ -2700,297 +2012,16 @@ const scanAttendance = async (
                     student_id,
                     status
                 )
-
                 VALUES (?, ?, ?)
                 `,
                 [
-                    session.session_id,
-                    studentId,
-                    attendanceStatus
+                    session_id,
+                    student_id,
+                    attendanceStatus,
                 ]
             );
 
-        // =================================================
-        // GET COMPLETE CREATED ATTENDANCE
-        // =================================================
-
-        const [createdRows] =
-            await db.query(
-                `
-                SELECT
-
-                    a.attendance_id,
-                    a.session_id,
-                    a.student_id,
-                    a.scanned_at,
-                    a.status,
-
-                    st.register_number,
-                    st.name AS student_name,
-                    st.email AS student_email,
-                    st.department AS student_department,
-                    st.year AS student_year,
-                    st.section AS student_section,
-
-                    ats.subject_id,
-                    ats.staff_id,
-                    ats.class_id,
-                    ats.academic_year,
-                    ats.session_date,
-                    ats.start_time,
-                    ats.end_time,
-
-                    s.subject_code,
-                    s.subject_name,
-
-                    staff.staff_code,
-                    staff.name AS staff_name,
-
-                    c.year AS class_year,
-                    c.section AS class_section,
-
-                    d.department_id,
-                    d.department_name,
-                    d.department_code
-
-                FROM attendance a
-
-                LEFT JOIN students st
-                    ON st.student_id =
-                       a.student_id
-
-                LEFT JOIN attendance_sessions ats
-                    ON ats.session_id =
-                       a.session_id
-
-                LEFT JOIN subjects s
-                    ON s.subject_id =
-                       ats.subject_id
-
-                LEFT JOIN staff
-                    ON staff.staff_id =
-                       ats.staff_id
-
-                LEFT JOIN classes c
-                    ON c.class_id =
-                       ats.class_id
-
-                LEFT JOIN departments d
-                    ON d.department_id =
-                       c.department_id
-
-                WHERE a.attendance_id = ?
-
-                LIMIT 1
-                `,
-                [result.insertId]
-            );
-
-        if (
-            createdRows.length === 0
-        ) {
-            return res.status(500).json({
-                success: false,
-                message:
-                    "Attendance was created but could not be retrieved"
-            });
-        }
-
-        const created =
-            createdRows[0];
-
-        // =================================================
-        // CONSISTENT RESPONSE
-        // =================================================
-
-        return res.status(201).json({
-
-            success: true,
-
-            message:
-                attendanceStatus === "LATE"
-                    ? "Attendance marked as late"
-                    : "Attendance marked successfully",
-
-            student_id:
-                studentId,
-
-            student_name:
-                student.name,
-
-            class_id:
-                session.class_id,
-
-            class_year:
-                allocation.class_year,
-
-            class_section:
-                allocation.class_section,
-
-            department:
-                allocation.department_name ||
-                allocation.allocation_department ||
-                allocation.subject_department ||
-                student.department ||
-                null,
-
-            academic_year:
-                session.academic_year ||
-                allocation.academic_year ||
-                null,
-
-            semester:
-                allocation.semester ||
-                null,
-
-            student: {
-
-                student_id:
-                    student.student_id,
-
-                user_id:
-                    student.user_id,
-
-                register_number:
-                    student.register_number,
-
-                name:
-                    student.name,
-
-                email:
-                    student.email,
-
-                department:
-                    student.department,
-
-                year:
-                    student.year,
-
-                section:
-                    student.section
-            },
-
-            session: {
-
-                session_id:
-                    session.session_id,
-
-                subject_id:
-                    session.subject_id,
-
-                subject_code:
-                    created.subject_code,
-
-                subject_name:
-                    created.subject_name,
-
-                staff_id:
-                    session.staff_id,
-
-                staff_name:
-                    created.staff_name,
-
-                class_id:
-                    session.class_id,
-
-                class_year:
-                    created.class_year,
-
-                class_section:
-                    created.class_section,
-
-                department_name:
-                    created.department_name,
-
-                department_code:
-                    created.department_code,
-
-                academic_year:
-                    session.academic_year,
-
-                session_date:
-                    session.session_date,
-
-                start_time:
-                    session.start_time,
-
-                end_time:
-                    session.end_time
-            },
-
-            attendance: {
-
-                attendance_id:
-                    created.attendance_id,
-
-                session_id:
-                    created.session_id,
-
-                student_id:
-                    created.student_id,
-
-                scanned_at:
-                    created.scanned_at,
-
-                status:
-                    created.status
-            }
-        });
-
-    } catch (error) {
-
-        console.error(
-            "Scan Attendance Error:",
-            error
-        );
-
-        if (
-            error.code ===
-            "ER_DUP_ENTRY"
-        ) {
-            return res.status(409).json({
-                success: false,
-                message:
-                    "Attendance already marked"
-            });
-        }
-
-        return res.status(500).json({
-            success: false,
-            message:
-                "Failed to process QR attendance",
-            error:
-                error.message
-        });
-    }
-};
-
-
-// =====================================================
-// UPDATE ATTENDANCE
-// PUT /api/attendance/:id
-// =====================================================
-
-const updateAttendance = async (
-    req,
-    res
-) => {
-    try {
-        const { id } =
-            req.params;
-
-        if (
-            !id ||
-            isNaN(Number(id))
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Valid attendance ID is required"
-            });
-        }
-
-        const [existing] =
+        const [rows] =
             await db.query(
                 `
                 SELECT *
@@ -2998,247 +2029,351 @@ const updateAttendance = async (
                 WHERE attendance_id = ?
                 LIMIT 1
                 `,
-                [id]
+                [result.insertId]
             );
 
-        if (existing.length === 0) {
-            return res.status(404).json({
-                success: false,
-                message:
-                    "Attendance record not found"
-            });
-        }
+        return res.status(201).json({
+            success: true,
+            message:
+                "Attendance marked successfully.",
+            attendance:
+                rows[0],
+        });
+    } catch (error) {
+        console.error(
+            "markAttendance error:",
+            error
+        );
 
-        const current =
-            existing[0];
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to mark attendance.",
+            error: error.message,
+        });
+    }
+}
 
-        const {
-            session_id,
-            student_id,
-            status
-        } = req.body;
 
-        const updatedSessionId =
-            session_id ??
-            current.session_id;
+// =====================================================
+// SCAN QR ATTENDANCE
+// =====================================================
+//
+// POST /api/attendance/scan
+//
+// Student sends:
+//
+// {
+//     qr_token: "..."
+// }
+//
+// Student is resolved from JWT.
+// =====================================================
 
-        const updatedStudentId =
-            student_id ??
-            current.student_id;
+async function scanAttendance(req, res) {
+    try {
+        const qrInput =
+            req.body?.qr_token ??
+            req.body?.qrToken ??
+            req.body?.token ??
+            req.body?.qr;
 
-        const updatedStatus =
-            String(
-                status ??
-                current.status
-            ).toUpperCase();
+        const qrToken =
+            extractQRToken(qrInput);
 
-        if (
-            ![
-                "PRESENT",
-                "LATE"
-            ].includes(
-                updatedStatus
-            )
-        ) {
+        if (!qrToken) {
             return res.status(400).json({
                 success: false,
                 message:
-                    "Status must be PRESENT or LATE"
+                    "QR token is required.",
             });
         }
 
-        const [sessions] =
-            await db.query(
-                `
-                SELECT
+        // -------------------------------------------------
+        // Resolve student from JWT
+        // -------------------------------------------------
 
-                    session_id,
-                    subject_id,
-                    staff_id,
-                    class_id,
-                    academic_year,
-                    status
+        const student =
+            await getLoggedInStudent(req);
 
-                FROM attendance_sessions
-
-                WHERE session_id = ?
-
-                LIMIT 1
-                `,
-                [updatedSessionId]
-            );
-
-        if (sessions.length === 0) {
+        if (!student) {
             return res.status(404).json({
                 success: false,
                 message:
-                    "Attendance session not found"
+                    "Student profile not found. Please login again.",
+            });
+        }
+
+        const studentId =
+            Number(student.student_id);
+
+        // -------------------------------------------------
+        // Find session by QR token
+        // -------------------------------------------------
+
+        const [sessionRows] =
+            await db.query(
+                `
+                SELECT *
+                FROM attendance_sessions
+                WHERE qr_token = ?
+                LIMIT 1
+                `,
+                [qrToken]
+            );
+
+        if (!sessionRows.length) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Invalid QR token.",
             });
         }
 
         const session =
-            sessions[0];
+            sessionRows[0];
 
-        const staffValidation =
-            await validateStaffForSession(
-                req,
-                session
-            );
+        // -------------------------------------------------
+        // Session must be active
+        // -------------------------------------------------
 
-        if (!staffValidation.valid) {
-            return res.status(
-                staffValidation.status
-            ).json({
-                success: false,
-                message:
-                    staffValidation.message
-            });
-        }
-
-        if (!session.class_id) {
+        if (
+            normalize(session.status) !==
+            "active"
+        ) {
             return res.status(400).json({
                 success: false,
                 message:
-                    "Attendance session is not linked to a class"
+                    "This attendance session is no longer active.",
             });
         }
+
+        // -------------------------------------------------
+        // Check QR expiry
+        // -------------------------------------------------
+
+        if (session.qr_expires_at) {
+            const expiry =
+                new Date(
+                    session.qr_expires_at
+                ).getTime();
+
+            if (
+                Number.isFinite(expiry) &&
+                Date.now() > expiry
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "QR code has expired. Please scan the latest QR code.",
+                });
+            }
+        }
+
+        // -------------------------------------------------
+        // Validate student class
+        // -------------------------------------------------
 
         const validation =
             await validateStudentForSession(
-                Number(updatedSessionId),
-                Number(updatedStudentId)
+                student,
+                session
             );
 
         if (!validation.valid) {
-            return res.status(
-                validation.status
-            ).json({
+            return res.status(403).json({
                 success: false,
                 message:
-                    validation.message
+                    validation.message,
             });
         }
 
-        const [duplicate] =
+        // -------------------------------------------------
+        // Check duplicate
+        // -------------------------------------------------
+
+        const [existingRows] =
             await db.query(
                 `
                 SELECT
-                    attendance_id
+                    attendance_id,
+                    session_id,
+                    student_id,
+                    status,
+                    scanned_at
 
                 FROM attendance
 
-                WHERE session_id = ?
-                  AND student_id = ?
-                  AND attendance_id <> ?
+                WHERE
+                    session_id = ?
+                    AND student_id = ?
 
                 LIMIT 1
                 `,
                 [
-                    updatedSessionId,
-                    updatedStudentId,
-                    id
+                    session.session_id,
+                    studentId,
                 ]
             );
 
-        if (duplicate.length > 0) {
+        if (existingRows.length) {
             return res.status(409).json({
                 success: false,
                 message:
-                    "Attendance already exists for this student and session"
+                    "Attendance has already been marked for this session.",
+                duplicate: true,
+                attendance:
+                    existingRows[0],
             });
         }
 
-        await db.query(
-            `
-            UPDATE attendance
+        // -------------------------------------------------
+        // Determine attendance status
+        //
+        // If session has start_time and scan happens
+        // after start time, mark LATE.
+        //
+        // Otherwise PRESENT.
+        // -------------------------------------------------
 
-            SET
-                session_id = ?,
-                student_id = ?,
-                status = ?
+        let attendanceStatus =
+            "PRESENT";
 
-            WHERE attendance_id = ?
-            `,
-            [
-                updatedSessionId,
-                updatedStudentId,
-                updatedStatus,
-                id
-            ]
-        );
+        if (
+            session.start_time &&
+            session.session_date
+        ) {
+            const startDateTime =
+                new Date(
+                    `${session.session_date}T${session.start_time}`
+                );
 
-        const [updated] =
+            if (
+                !Number.isNaN(
+                    startDateTime.getTime()
+                ) &&
+                Date.now() >
+                    startDateTime.getTime()
+            ) {
+                attendanceStatus =
+                    "LATE";
+            }
+        }
+
+        // -------------------------------------------------
+        // INSERT ATTENDANCE
+        // -------------------------------------------------
+
+        const [insertResult] =
+            await db.query(
+                `
+                INSERT INTO attendance
+                (
+                    session_id,
+                    student_id,
+                    status
+                )
+                VALUES (?, ?, ?)
+                `,
+                [
+                    session.session_id,
+                    studentId,
+                    attendanceStatus,
+                ]
+            );
+
+        const attendanceId =
+            insertResult.insertId;
+
+        // -------------------------------------------------
+        // Read inserted record back
+        // -------------------------------------------------
+
+        const [attendanceRows] =
             await db.query(
                 `
                 SELECT
+                    a.*,
 
-                    a.attendance_id,
-                    a.session_id,
-                    a.student_id,
-                    a.scanned_at,
-                    a.status,
+                    s.student_id,
+                    s.student_code,
+                    s.name AS student_name,
+                    s.email AS student_email,
 
-                    st.register_number,
-                    st.name AS student_name,
-                    st.email AS student_email,
-                    st.department,
-                    st.year,
-                    st.section,
-
+                    ats.session_id,
+                    ats.subject_id,
+                    ats.staff_id,
                     ats.class_id,
+                    ats.allocation_id,
                     ats.academic_year,
-
-                    s.subject_code,
-                    s.subject_name,
-
-                    c.year AS class_year,
-                    c.section AS class_section,
-
-                    d.department_name,
-                    d.department_code
+                    ats.semester,
+                    ats.session_date
 
                 FROM attendance a
 
-                LEFT JOIN students st
-                    ON st.student_id =
+                INNER JOIN students s
+                    ON s.student_id =
                        a.student_id
 
                 LEFT JOIN attendance_sessions ats
                     ON ats.session_id =
                        a.session_id
 
-                LEFT JOIN subjects s
-                    ON s.subject_id =
-                       ats.subject_id
-
-                LEFT JOIN classes c
-                    ON c.class_id =
-                       ats.class_id
-
-                LEFT JOIN departments d
-                    ON d.department_id =
-                       c.department_id
-
-                WHERE a.attendance_id = ?
+                WHERE
+                    a.attendance_id = ?
 
                 LIMIT 1
                 `,
-                [id]
+                [attendanceId]
             );
 
-        return res.status(200).json({
+        return res.status(201).json({
             success: true,
-            message:
-                "Attendance updated successfully",
-            attendance:
-                updated[0]
-        });
 
+            message:
+                attendanceStatus === "LATE"
+                    ? "Attendance marked successfully as late."
+                    : "Attendance marked successfully.",
+
+            attendance:
+                attendanceRows[0] || {
+                    attendance_id:
+                        attendanceId,
+                    session_id:
+                        session.session_id,
+                    student_id:
+                        studentId,
+                    status:
+                        attendanceStatus,
+                },
+
+            student: {
+                student_id:
+                    student.student_id,
+                student_code:
+                    student.student_code,
+                name:
+                    student.name,
+            },
+
+            session: {
+                session_id:
+                    session.session_id,
+                subject_id:
+                    session.subject_id,
+                class_id:
+                    session.class_id,
+            },
+        });
     } catch (error) {
         console.error(
-            "Update Attendance Error:",
+            "scanAttendance error:",
             error
         );
+
+        // -------------------------------------------------
+        // Handle duplicate-key race condition
+        // -------------------------------------------------
 
         if (
             error.code ===
@@ -3247,94 +2382,214 @@ const updateAttendance = async (
             return res.status(409).json({
                 success: false,
                 message:
-                    "Attendance already exists for this student and session"
+                    "Attendance has already been marked for this session.",
+                duplicate: true,
             });
         }
 
         return res.status(500).json({
             success: false,
             message:
-                "Failed to update attendance",
-            error:
-                error.message
+                "Failed to save attendance.",
+            error: error.message,
         });
     }
-};
+}
 
 
 // =====================================================
-// DELETE ATTENDANCE
-// DELETE /api/attendance/:id
+// UPDATE ATTENDANCE
 // =====================================================
 
-const deleteAttendance = async (
+async function updateAttendance(
     req,
     res
-) => {
+) {
     try {
-        const { id } =
-            req.params;
+        const attendanceId =
+            Number(req.params.id);
+
+        const {
+            status,
+        } = req.body;
+
+        if (!Number.isInteger(attendanceId)) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Invalid attendance ID.",
+            });
+        }
+
+        const attendanceStatus =
+            String(
+                status || ""
+            )
+                .trim()
+                .toUpperCase();
 
         if (
-            !id ||
-            isNaN(Number(id))
+            ![
+                "PRESENT",
+                "LATE",
+                "ABSENT",
+            ].includes(attendanceStatus)
         ) {
             return res.status(400).json({
                 success: false,
                 message:
-                    "Valid attendance ID is required"
+                    "Invalid attendance status.",
             });
         }
 
-        const [existing] =
+        const [rows] =
             await db.query(
                 `
                 SELECT
-                    attendance_id
-                FROM attendance
-                WHERE attendance_id = ?
+                    a.*,
+                    ats.staff_id,
+                    ats.status AS session_status
+
+                FROM attendance a
+
+                LEFT JOIN attendance_sessions ats
+                    ON ats.session_id =
+                       a.session_id
+
+                WHERE a.attendance_id = ?
+
                 LIMIT 1
                 `,
-                [id]
+                [attendanceId]
             );
 
-        if (existing.length === 0) {
+        if (!rows.length) {
             return res.status(404).json({
                 success: false,
                 message:
-                    "Attendance record not found"
+                    "Attendance record not found.",
+            });
+        }
+
+        const record =
+            rows[0];
+
+        const validation =
+            await validateStaffForSession(
+                req,
+                record
+            );
+
+        if (!validation.valid) {
+            return res.status(403).json({
+                success: false,
+                message:
+                    validation.message,
             });
         }
 
         await db.query(
             `
-            DELETE FROM attendance
+            UPDATE attendance
+            SET status = ?
             WHERE attendance_id = ?
             `,
-            [id]
+            [
+                attendanceStatus,
+                attendanceId,
+            ]
         );
 
-        return res.status(200).json({
+        const [updatedRows] =
+            await db.query(
+                `
+                SELECT *
+                FROM attendance
+                WHERE attendance_id = ?
+                LIMIT 1
+                `,
+                [attendanceId]
+            );
+
+        return res.json({
             success: true,
             message:
-                "Attendance deleted successfully"
+                "Attendance updated successfully.",
+            attendance:
+                updatedRows[0],
         });
-
     } catch (error) {
         console.error(
-            "Delete Attendance Error:",
+            "updateAttendance error:",
             error
         );
 
         return res.status(500).json({
             success: false,
             message:
-                "Failed to delete attendance",
-            error:
-                error.message
+                "Failed to update attendance.",
+            error: error.message,
         });
     }
-};
+}
+
+
+// =====================================================
+// DELETE ATTENDANCE
+// =====================================================
+
+async function deleteAttendance(
+    req,
+    res
+) {
+    try {
+        const attendanceId =
+            Number(req.params.id);
+
+        if (!Number.isInteger(attendanceId)) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Invalid attendance ID.",
+            });
+        }
+
+        const [result] =
+            await db.query(
+                `
+                DELETE FROM attendance
+                WHERE attendance_id = ?
+                `,
+                [attendanceId]
+            );
+
+        if (!result.affectedRows) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Attendance record not found.",
+            });
+        }
+
+        return res.json({
+            success: true,
+            message:
+                "Attendance deleted successfully.",
+        });
+    } catch (error) {
+        console.error(
+            "deleteAttendance error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to delete attendance.",
+            error: error.message,
+        });
+    }
+}
 
 
 // =====================================================
@@ -3342,26 +2597,16 @@ const deleteAttendance = async (
 // =====================================================
 
 module.exports = {
-
     getAttendance,
-
     getAttendanceById,
-
     getAttendanceBySession,
-
     getAttendanceCountBySession,
-
     getAttendanceByStudent,
-
+    getMyAttendance,
     markAttendance,
-
     scanAttendance,
-
     updateAttendance,
-
     deleteAttendance,
-
     getMySubjectClasses,
-
-    getMySubjectStudents
+    getMySubjectStudents,
 };
