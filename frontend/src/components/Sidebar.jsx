@@ -154,7 +154,7 @@ const Sidebar = () => {
             type="button"
             onClick={() => setMobileOpen(true)}
             aria-label="Open navigation menu"
-            className="fixed left-4 top-4 z-[60] flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-lg transition hover:bg-indigo-50 hover:text-indigo-700 md:hidden"
+            className="fixed left-4 top-4 z-60 flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-lg transition hover:bg-indigo-50 hover:text-indigo-700 md:hidden"
         >
             <FaBars className="text-lg" />
         </button>

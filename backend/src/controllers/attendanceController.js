@@ -1936,6 +1936,20 @@ const markAttendance = async (
 // =====================================================
 // MARK ATTENDANCE USING QR TOKEN
 // POST /api/attendance/scan
+//
+// SECURITY:
+//
+// The student_id is NOT trusted from the browser.
+//
+// The logged-in user's user_id is taken from JWT
+// middleware and mapped to students.user_id.
+//
+// Request body:
+//
+// {
+//     "qr_token": "...."
+// }
+//
 // =====================================================
 
 const scanAttendance = async (
@@ -1943,21 +1957,105 @@ const scanAttendance = async (
     res
 ) => {
     try {
+
+        // =================================================
+        // GET QR TOKEN
+        // =================================================
+
         const {
-            qr_token,
-            student_id
-        } = req.body;
+            qr_token
+        } = req.body || {};
 
         if (
             !qr_token ||
-            !student_id
+            !String(qr_token).trim()
         ) {
             return res.status(400).json({
                 success: false,
                 message:
-                    "qr_token and student_id are required"
+                    "QR token is required"
             });
         }
+
+        const cleanQrToken =
+            String(qr_token).trim();
+
+
+        // =================================================
+        // GET LOGGED-IN USER
+        // =================================================
+
+        const user =
+            req.user || {};
+
+        const userId =
+            user.user_id ??
+            user.id ??
+            user.userId;
+
+        if (
+            userId === undefined ||
+            userId === null
+        ) {
+            return res.status(401).json({
+                success: false,
+                message:
+                    "Authenticated user not found. Please login again."
+            });
+        }
+
+
+        // =================================================
+        // FIND STUDENT USING LOGGED-IN USER
+        // =================================================
+
+        const [studentRows] =
+            await db.query(
+                `
+                SELECT
+
+                    student_id,
+                    user_id,
+                    register_number,
+                    name,
+                    email,
+                    department,
+                    year,
+                    section
+
+                FROM students
+
+                WHERE user_id = ?
+
+                LIMIT 1
+                `,
+                [userId]
+            );
+
+
+        if (
+            studentRows.length === 0
+        ) {
+            return res.status(403).json({
+                success: false,
+                message:
+                    "Student account not found for the logged-in user"
+            });
+        }
+
+
+        const student =
+            studentRows[0];
+
+        const studentId =
+            Number(
+                student.student_id
+            );
+
+
+        // =================================================
+        // FIND ACTIVE SESSION USING QR TOKEN
+        // =================================================
 
         const [sessions] =
             await db.query(
@@ -1972,6 +2070,7 @@ const scanAttendance = async (
                     session_date,
                     start_time,
                     end_time,
+
                     qr_token,
                     qr_expires_at,
 
@@ -1986,15 +2085,17 @@ const scanAttendance = async (
 
                 WHERE qr_token = ?
 
-                  AND status =
-                      'ACTIVE'
+                  AND status = 'ACTIVE'
 
                 LIMIT 1
                 `,
-                [qr_token]
+                [cleanQrToken]
             );
 
-        if (sessions.length === 0) {
+
+        if (
+            sessions.length === 0
+        ) {
             return res.status(404).json({
                 success: false,
                 message:
@@ -2002,10 +2103,18 @@ const scanAttendance = async (
             });
         }
 
+
         const session =
             sessions[0];
 
-        if (!session.class_id) {
+
+        // =================================================
+        // SESSION MUST HAVE CLASS
+        // =================================================
+
+        if (
+            !session.class_id
+        ) {
             return res.status(400).json({
                 success: false,
                 message:
@@ -2013,9 +2122,10 @@ const scanAttendance = async (
             });
         }
 
-        // -------------------------------------------------
-        // TIMEZONE-SAFE EXPIRY
-        // -------------------------------------------------
+
+        // =================================================
+        // CHECK QR EXPIRATION
+        // =================================================
 
         if (
             session.qr_expires_at_ms &&
@@ -2030,13 +2140,23 @@ const scanAttendance = async (
             });
         }
 
+
+        // =================================================
+        // VALIDATE STUDENT AGAINST SESSION CLASS
+        // =================================================
+
         const validation =
             await validateStudentForSession(
-                Number(session.session_id),
-                Number(student_id)
+                Number(
+                    session.session_id
+                ),
+                studentId
             );
 
-        if (!validation.valid) {
+
+        if (
+            !validation.valid
+        ) {
             return res.status(
                 validation.status
             ).json({
@@ -2046,16 +2166,20 @@ const scanAttendance = async (
             });
         }
 
-        const student =
-            validation.student;
 
         const allocation =
             validation.allocation;
+
+
+        // =================================================
+        // CHECK DUPLICATE ATTENDANCE
+        // =================================================
 
         const [existing] =
             await db.query(
                 `
                 SELECT
+
                     attendance_id,
                     scanned_at,
                     status
@@ -2069,11 +2193,14 @@ const scanAttendance = async (
                 `,
                 [
                     session.session_id,
-                    student_id
+                    studentId
                 ]
             );
 
-        if (existing.length > 0) {
+
+        if (
+            existing.length > 0
+        ) {
             return res.status(409).json({
                 success: false,
                 message:
@@ -2083,9 +2210,10 @@ const scanAttendance = async (
             });
         }
 
-        // -------------------------------------------------
-        // PRESENT / LATE
-        // -------------------------------------------------
+
+        // =================================================
+        // DETERMINE PRESENT / LATE
+        // =================================================
 
         let attendanceStatus =
             "PRESENT";
@@ -2098,7 +2226,9 @@ const scanAttendance = async (
                 session.start_time || ""
             ).substring(0, 8);
 
+
         if (startTime) {
+
             const [
                 hours,
                 minutes,
@@ -2108,8 +2238,10 @@ const scanAttendance = async (
                     .split(":")
                     .map(Number);
 
+
             const sessionStart =
                 new Date(now);
+
 
             sessionStart.setHours(
                 hours || 0,
@@ -2117,6 +2249,7 @@ const scanAttendance = async (
                 seconds || 0,
                 0
             );
+
 
             if (
                 now >
@@ -2126,6 +2259,11 @@ const scanAttendance = async (
                     "LATE";
             }
         }
+
+
+        // =================================================
+        // INSERT ATTENDANCE
+        // =================================================
 
         const [result] =
             await db.query(
@@ -2141,12 +2279,17 @@ const scanAttendance = async (
                 `,
                 [
                     session.session_id,
-                    student_id,
+                    studentId,
                     attendanceStatus
                 ]
             );
 
-        const [created] =
+
+        // =================================================
+        // GET COMPLETE CREATED ATTENDANCE
+        // =================================================
+
+        const [createdRows] =
             await db.query(
                 `
                 SELECT
@@ -2160,19 +2303,28 @@ const scanAttendance = async (
                     st.register_number,
                     st.name AS student_name,
                     st.email AS student_email,
-                    st.department,
-                    st.year,
-                    st.section,
+                    st.department AS student_department,
+                    st.year AS student_year,
+                    st.section AS student_section,
 
+                    ats.subject_id,
+                    ats.staff_id,
                     ats.class_id,
                     ats.academic_year,
+                    ats.session_date,
+                    ats.start_time,
+                    ats.end_time,
 
                     s.subject_code,
                     s.subject_name,
 
+                    staff.staff_code,
+                    staff.name AS staff_name,
+
                     c.year AS class_year,
                     c.section AS class_section,
 
+                    d.department_id,
                     d.department_name,
                     d.department_code
 
@@ -2190,6 +2342,10 @@ const scanAttendance = async (
                     ON s.subject_id =
                        ats.subject_id
 
+                LEFT JOIN staff
+                    ON staff.staff_id =
+                       ats.staff_id
+
                 LEFT JOIN classes c
                     ON c.class_id =
                        ats.class_id
@@ -2205,19 +2361,37 @@ const scanAttendance = async (
                 [result.insertId]
             );
 
+
+        if (
+            createdRows.length === 0
+        ) {
+            return res.status(500).json({
+                success: false,
+                message:
+                    "Attendance was created but could not be retrieved"
+            });
+        }
+
+
+        const created =
+            createdRows[0];
+
+
+        // =================================================
+        // CONSISTENT RESPONSE
+        // =================================================
+
         return res.status(201).json({
+
             success: true,
 
             message:
-                attendanceStatus ===
-                "LATE"
+                attendanceStatus === "LATE"
                     ? "Attendance marked as late"
                     : "Attendance marked successfully",
 
             student_id:
-                Number(
-                    student.student_id
-                ),
+                studentId,
 
             student_name:
                 student.name,
@@ -2235,6 +2409,7 @@ const scanAttendance = async (
                 allocation.department_name ||
                 allocation.allocation_department ||
                 allocation.subject_department ||
+                student.department ||
                 null,
 
             academic_year:
@@ -2243,17 +2418,124 @@ const scanAttendance = async (
                 null,
 
             semester:
-                allocation.semester,
+                allocation.semester ||
+                null,
 
-            attendance:
-                created[0]
+            // ---------------------------------------------
+            // STUDENT OBJECT
+            // ---------------------------------------------
+
+            student: {
+                student_id:
+                    student.student_id,
+
+                user_id:
+                    student.user_id,
+
+                register_number:
+                    student.register_number,
+
+                name:
+                    student.name,
+
+                email:
+                    student.email,
+
+                department:
+                    student.department,
+
+                year:
+                    student.year,
+
+                section:
+                    student.section
+            },
+
+            // ---------------------------------------------
+            // SESSION OBJECT
+            // ---------------------------------------------
+
+            session: {
+                session_id:
+                    session.session_id,
+
+                subject_id:
+                    session.subject_id,
+
+                subject_code:
+                    created.subject_code,
+
+                subject_name:
+                    created.subject_name,
+
+                staff_id:
+                    session.staff_id,
+
+                staff_name:
+                    created.staff_name,
+
+                class_id:
+                    session.class_id,
+
+                class_year:
+                    created.class_year,
+
+                class_section:
+                    created.class_section,
+
+                department_name:
+                    created.department_name,
+
+                department_code:
+                    created.department_code,
+
+                academic_year:
+                    session.academic_year,
+
+                session_date:
+                    session.session_date,
+
+                start_time:
+                    session.start_time,
+
+                end_time:
+                    session.end_time
+            },
+
+            // ---------------------------------------------
+            // ATTENDANCE OBJECT
+            // ---------------------------------------------
+
+            attendance: {
+                attendance_id:
+                    created.attendance_id,
+
+                session_id:
+                    created.session_id,
+
+                student_id:
+                    created.student_id,
+
+                scanned_at:
+                    created.scanned_at,
+
+                status:
+                    created.status
+            }
         });
 
+
     } catch (error) {
+
         console.error(
             "Scan Attendance Error:",
             error
         );
+
+
+        // =================================================
+        // DUPLICATE ENTRY
+        // =================================================
 
         if (
             error.code ===
@@ -2266,16 +2548,20 @@ const scanAttendance = async (
             });
         }
 
+
+        // =================================================
+        // SERVER ERROR
+        // =================================================
+
         return res.status(500).json({
             success: false,
             message:
                 "Failed to process QR attendance",
-            error: error.message
+            error:
+                error.message
         });
     }
 };
-
-
 // =====================================================
 // UPDATE ATTENDANCE
 // PUT /api/attendance/:id
