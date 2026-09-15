@@ -1,6 +1,8 @@
 // =====================================================
-// CLASS TEACHER ASSIGNMENT ROUTES
-// ATTENDANCE MANAGEMENT SYSTEM
+// classTeacherAssignmentRoutes.js
+// Attendance Management System
+//
+// ADMIN / HOD CLASS TEACHER ASSIGNMENT ROUTES
 // =====================================================
 
 const express = require("express");
@@ -11,8 +13,6 @@ const {
     createClassTeacherAssignment,
     updateClassTeacherAssignment,
     deleteClassTeacherAssignment,
-    getAssignmentsByClass,
-    getAssignmentsByTeacher
 } = require("../controllers/classTeacherAssignmentController");
 
 const authenticateToken =
@@ -24,8 +24,12 @@ const authorizeRoles =
 const router = express.Router();
 
 // =====================================================
-// GET ALL ASSIGNMENTS
+// GET ALL CLASS TEACHER ASSIGNMENTS
+// =====================================================
+//
 // GET /api/class-teacher-assignments
+//
+// ADMIN and HOD can view assignments.
 // =====================================================
 
 router.get(
@@ -36,43 +40,13 @@ router.get(
 );
 
 // =====================================================
-// GET ASSIGNMENTS BY CLASS
+// GET SINGLE CLASS TEACHER ASSIGNMENT
+// =====================================================
+//
+// GET /api/class-teacher-assignments/:id
 //
 // IMPORTANT:
-// This must come before /:id
-// =====================================================
-
-router.get(
-    "/class/:classId",
-    authenticateToken,
-    authorizeRoles(
-        "ADMIN",
-        "HOD",
-        "STAFF",
-        "TEACHER"
-    ),
-    getAssignmentsByClass
-);
-
-// =====================================================
-// GET ASSIGNMENTS BY TEACHER
-// =====================================================
-
-router.get(
-    "/teacher/:userId",
-    authenticateToken,
-    authorizeRoles(
-        "ADMIN",
-        "HOD",
-        "STAFF",
-        "TEACHER"
-    ),
-    getAssignmentsByTeacher
-);
-
-// =====================================================
-// GET ONE ASSIGNMENT
-// GET /api/class-teacher-assignments/:id
+// This route must remain AFTER the "/" route.
 // =====================================================
 
 router.get(
@@ -83,8 +57,12 @@ router.get(
 );
 
 // =====================================================
-// CREATE
+// CREATE CLASS TEACHER ASSIGNMENT
+// =====================================================
+//
 // POST /api/class-teacher-assignments
+//
+// ADMIN and HOD can create assignments.
 // =====================================================
 
 router.post(
@@ -95,7 +73,9 @@ router.post(
 );
 
 // =====================================================
-// UPDATE
+// UPDATE CLASS TEACHER ASSIGNMENT
+// =====================================================
+//
 // PUT /api/class-teacher-assignments/:id
 // =====================================================
 
@@ -107,7 +87,9 @@ router.put(
 );
 
 // =====================================================
-// DELETE
+// DELETE CLASS TEACHER ASSIGNMENT
+// =====================================================
+//
 // DELETE /api/class-teacher-assignments/:id
 // =====================================================
 
