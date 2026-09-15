@@ -9,6 +9,14 @@ const authorizeRoles = require("../middleware/roleMiddleware");
 const router = express.Router();
 
 
+
+console.log("authenticateToken =", typeof authenticateToken);
+console.log("authorizeRoles =", typeof authorizeRoles);
+console.log("getDashboard =", typeof classTeacherController.getDashboard);
+console.log("getProfile =", typeof classTeacherController.getProfile);
+console.log("getMyClass =", typeof classTeacherController.getMyClass);
+console.log("getStudents =", typeof classTeacherController.getStudents);
+console.log("getClassStaff =", typeof classTeacherController.getClassStaff);
 // =====================================================
 // CLASS TEACHER DASHBOARD
 //
