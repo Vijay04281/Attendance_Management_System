@@ -128,12 +128,15 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow Postman, server-to-server, mobile apps
+    console.log("REQUEST ORIGIN:", origin);
+
+    // Allow Postman, mobile apps, server-to-server requests
     if (!origin) {
       return callback(null, true);
     }
 
     if (allowedOrigins.includes(origin)) {
+      console.log("CORS ALLOWED:", origin);
       return callback(null, true);
     }
 
@@ -164,13 +167,13 @@ const corsOptions = {
   ],
 };
 
-// Handle preflight requests
+// Preflight requests
 app.options("*", cors(corsOptions));
 
-// Apply CORS
+// Apply CORS globally
 app.use(cors(corsOptions));
 
-// Extra safety headers
+// Extra headers
 app.use((req, res, next) => {
   const origin = req.headers.origin;
 
@@ -195,7 +198,6 @@ app.use((req, res, next) => {
 
   next();
 });
-
 // =====================================================
 // BODY PARSERS
 // =====================================================
