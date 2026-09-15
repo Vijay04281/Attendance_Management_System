@@ -18,6 +18,8 @@ import {
     FaChartBar,
     FaClock,
     FaUserTimes,
+    FaUserGraduate,
+    FaHistory,
 } from "react-icons/fa";
 
 // =====================================================
@@ -47,7 +49,10 @@ const StaffDashboard = () => {
             loggedUser = JSON.parse(storedUser);
         }
     } catch (error) {
-        console.error("Unable to parse logged-in user:", error);
+        console.error(
+            "Unable to parse logged-in user:",
+            error
+        );
     }
 
     // =================================================
@@ -55,21 +60,24 @@ const StaffDashboard = () => {
     // =================================================
 
     const [subjects, setSubjects] = useState([]);
-    const [selectedAllocationId, setSelectedAllocationId] = useState("");
+    const [selectedAllocationId, setSelectedAllocationId] =
+        useState("");
 
     // =================================================
     // ATTENDANCE SESSION
     // =================================================
 
     const [sessionId, setSessionId] = useState(null);
-    const [sessionStatus, setSessionStatus] = useState(null);
+    const [sessionStatus, setSessionStatus] =
+        useState(null);
 
     // =================================================
     // QR
     // =================================================
 
     const [qrImage, setQrImage] = useState("");
-    const [qrExpiresAt, setQrExpiresAt] = useState(null);
+    const [qrExpiresAt, setQrExpiresAt] =
+        useState(null);
 
     // =================================================
     // ATTENDANCE STATISTICS
@@ -85,12 +93,33 @@ const StaffDashboard = () => {
         useState(false);
 
     // =================================================
+    // LIVE ATTENDANCE
+    // =================================================
+
+    const [attendanceRecords, setAttendanceRecords] =
+        useState([]);
+
+    const [latestAttendance, setLatestAttendance] =
+        useState(null);
+
+    const [lastAttendanceTime, setLastAttendanceTime] =
+        useState(null);
+
+    // =================================================
     // LOADING
     // =================================================
 
-    const [loadingSubjects, setLoadingSubjects] = useState(true);
-    const [loadingSession, setLoadingSession] = useState(false);
-    const [loadingQR, setLoadingQR] = useState(false);
+    const [loadingSubjects, setLoadingSubjects] =
+        useState(true);
+
+    const [loadingSession, setLoadingSession] =
+        useState(false);
+
+    const [loadingQR, setLoadingQR] =
+        useState(false);
+
+    const [loadingAttendance, setLoadingAttendance] =
+        useState(false);
 
     // =================================================
     // MESSAGE
@@ -103,23 +132,35 @@ const StaffDashboard = () => {
     // COUNTDOWN
     // =================================================
 
-    const [secondsLeft, setSecondsLeft] = useState(0);
+    const [secondsLeft, setSecondsLeft] =
+        useState(0);
 
     // =================================================
     // REFS
     // =================================================
 
     const qrTimerRef = useRef(null);
+
     const countTimerRef = useRef(null);
+
     const countdownTimerRef = useRef(null);
-    const activeSessionTimerRef = useRef(null);
 
-    const attendanceRequestRef = useRef(false);
-    const activeSessionRequestRef = useRef(false);
+    const activeSessionTimerRef =
+        useRef(null);
 
-    // Used to prevent an older QR request from overwriting
-    // a newer QR response.
-    const qrRequestRef = useRef(0);
+    const attendanceRequestRef =
+        useRef(false);
+
+    const activeSessionRequestRef =
+        useRef(false);
+
+    const qrRequestRef =
+        useRef(0);
+
+    // Used to prevent an old attendance request
+    // from overwriting a newer response.
+    const liveAttendanceRequestRef =
+        useRef(0);
 
     // =================================================
     // COMMON HEADERS
@@ -145,411 +186,857 @@ const StaffDashboard = () => {
     // EXTRACT ATTENDANCE RECORDS
     // =================================================
 
-    const extractAttendanceRecords = useCallback((data) => {
-        if (Array.isArray(data)) {
-            return data;
-        }
+    const extractAttendanceRecords = useCallback(
+        (data) => {
+            if (Array.isArray(data)) {
+                return data;
+            }
 
-        if (!data || typeof data !== "object") {
+            if (
+                !data ||
+                typeof data !== "object"
+            ) {
+                return [];
+            }
+
+            if (Array.isArray(data.records)) {
+                return data.records;
+            }
+
+            if (Array.isArray(data.data)) {
+                return data.data;
+            }
+
+            if (
+                Array.isArray(
+                    data.attendance
+                )
+            ) {
+                return data.attendance;
+            }
+
+            if (Array.isArray(data.rows)) {
+                return data.rows;
+            }
+
             return [];
-        }
+        },
+        []
+    );
 
-        if (Array.isArray(data.records)) {
-            return data.records;
-        }
+    // =================================================
+    // GET RECORD TIME
+    // =================================================
 
-        if (Array.isArray(data.data)) {
-            return data.data;
-        }
+    const getAttendanceTimestamp =
+        useCallback((record) => {
+            return (
+                record.scanned_at ??
+                record.scan_time ??
+                record.attendance_time ??
+                record.created_at ??
+                record.createdAt ??
+                null
+            );
+        }, []);
 
-        if (Array.isArray(data.attendance)) {
-            return data.attendance;
-        }
+    // =================================================
+    // GET RECORD ID
+    // =================================================
 
-        if (Array.isArray(data.rows)) {
-            return data.rows;
-        }
+    const getAttendanceId =
+        useCallback((record) => {
+            return (
+                record.attendance_id ??
+                record.id ??
+                record.attendanceId ??
+                null
+            );
+        }, []);
 
-        return [];
-    }, []);
+    // =================================================
+    // GET STUDENT NAME
+    // =================================================
+
+    const getStudentName =
+        useCallback((record) => {
+            return (
+                record.student_name ??
+                record.full_name ??
+                record.name ??
+                record.student_full_name ??
+                "Unknown Student"
+            );
+        }, []);
+
+    // =================================================
+    // GET REGISTER NUMBER
+    // =================================================
+
+    const getRegisterNumber =
+        useCallback((record) => {
+            return (
+                record.register_number ??
+                record.register_no ??
+                record.registerNo ??
+                record.student_register_number ??
+                record.student_code ??
+                record.roll_number ??
+                "-"
+            );
+        }, []);
+
+    // =================================================
+    // GET ATTENDANCE STATUS
+    // =================================================
+
+    const getAttendanceStatus =
+        useCallback((record) => {
+            return String(
+                record.status ??
+                    record.attendance_status ??
+                    ""
+            ).toUpperCase();
+        }, []);
+
+    // =================================================
+    // SORT ATTENDANCE RECORDS
+    // =================================================
+
+    const sortAttendanceRecords =
+        useCallback(
+            (records) => {
+                return [...records].sort(
+                    (a, b) => {
+                        const aTime =
+                            new Date(
+                                String(
+                                    getAttendanceTimestamp(
+                                        a
+                                    ) || ""
+                                ).replace(
+                                    " ",
+                                    "T"
+                                )
+                            ).getTime();
+
+                        const bTime =
+                            new Date(
+                                String(
+                                    getAttendanceTimestamp(
+                                        b
+                                    ) || ""
+                                ).replace(
+                                    " ",
+                                    "T"
+                                )
+                            ).getTime();
+
+                        if (
+                            Number.isFinite(
+                                bTime
+                            ) &&
+                            Number.isFinite(
+                                aTime
+                            )
+                        ) {
+                            return (
+                                bTime - aTime
+                            );
+                        }
+
+                        const aId =
+                            Number(
+                                getAttendanceId(
+                                    a
+                                ) || 0
+                            );
+
+                        const bId =
+                            Number(
+                                getAttendanceId(
+                                    b
+                                ) || 0
+                            );
+
+                        return bId - aId;
+                    }
+                );
+            },
+            [getAttendanceTimestamp, getAttendanceId]
+        );
 
     // =================================================
     // APPLY ATTENDANCE STATISTICS
     // =================================================
 
-    const applyAttendanceStatistics = useCallback(
-        (stats = {}, records = []) => {
-            let presentCount = Number(
-                stats.present ??
-                    stats.present_count ??
-                    stats.presentCount ??
-                    0
-            );
+    const calculateAttendanceStatistics =
+        useCallback(
+            (stats = {}, records = []) => {
+                let presentCount = Number(
+                    stats.present ??
+                        stats.present_count ??
+                        stats.presentCount ??
+                        0
+                );
 
-            let lateCount = Number(
-                stats.late ??
-                    stats.late_count ??
-                    stats.lateCount ??
-                    0
-            );
+                let lateCount = Number(
+                    stats.late ??
+                        stats.late_count ??
+                        stats.lateCount ??
+                        0
+                );
 
-            let totalCount = Number(
-                stats.total ??
-                    stats.total_count ??
-                    stats.totalCount ??
-                    0
-            );
+                let totalCount = Number(
+                    stats.total ??
+                        stats.total_count ??
+                        stats.totalCount ??
+                        0
+                );
 
-            let percentageValue = Number(
-                stats.percentage ??
-                    stats.attendance_percentage ??
-                    stats.attendancePercentage ??
-                    0
-            );
+                let percentageValue = Number(
+                    stats.percentage ??
+                        stats.attendance_percentage ??
+                        stats.attendancePercentage ??
+                        0
+                );
 
-            // =============================================
-            // FALLBACK FROM RECORDS
-            // =============================================
+                // =============================================
+                // CALCULATE FROM RECORDS
+                // =============================================
 
-            if (records.length > 0) {
-                let calculatedPresent = 0;
-                let calculatedLate = 0;
+                if (records.length > 0) {
+                    let calculatedPresent = 0;
+                    let calculatedLate = 0;
 
-                records.forEach((record) => {
-                    const status = String(
-                        record.status ??
-                            record.attendance_status ??
-                            ""
-                    ).toUpperCase();
+                    records.forEach(
+                        (record) => {
+                            const status =
+                                getAttendanceStatus(
+                                    record
+                                );
 
-                    if (status === "PRESENT") {
-                        calculatedPresent += 1;
+                            if (
+                                status ===
+                                "PRESENT"
+                            ) {
+                                calculatedPresent += 1;
+                            }
+
+                            if (
+                                status ===
+                                "LATE"
+                            ) {
+                                calculatedLate += 1;
+                            }
+                        }
+                    );
+
+                    if (
+                        presentCount === 0 &&
+                        lateCount === 0
+                    ) {
+                        presentCount =
+                            calculatedPresent;
+
+                        lateCount =
+                            calculatedLate;
                     }
 
-                    if (status === "LATE") {
-                        calculatedLate += 1;
+                    if (totalCount === 0) {
+                        totalCount =
+                            records.length;
                     }
-                });
+                }
+
+                // =============================================
+                // TOTAL CANNOT BE LESS THAN ATTENDED
+                // =============================================
 
                 if (
-                    presentCount === 0 &&
-                    lateCount === 0
+                    totalCount <
+                    presentCount +
+                        lateCount
                 ) {
-                    presentCount = calculatedPresent;
-                    lateCount = calculatedLate;
+                    totalCount =
+                        presentCount +
+                        lateCount;
                 }
 
-                if (totalCount === 0) {
-                    totalCount = records.length;
+                // =============================================
+                // ABSENT
+                // =============================================
+
+                const attendedCount =
+                    presentCount +
+                    lateCount;
+
+                const absentCount =
+                    Math.max(
+                        totalCount -
+                            attendedCount,
+                        0
+                    );
+
+                // =============================================
+                // PERCENTAGE
+                // =============================================
+
+                if (
+                    !percentageValue &&
+                    totalCount > 0
+                ) {
+                    percentageValue =
+                        (attendedCount /
+                            totalCount) *
+                        100;
                 }
-            }
 
-            // =============================================
-            // TOTAL
-            // =============================================
-
-            if (totalCount < presentCount + lateCount) {
-                totalCount = presentCount + lateCount;
-            }
-
-            // =============================================
-            // ABSENT
-            // =============================================
-
-            const attendedCount =
-                presentCount + lateCount;
-
-            const absentCount = Math.max(
-                totalCount - attendedCount,
-                0
-            );
-
-            // =============================================
-            // PERCENTAGE
-            // =============================================
-
-            if (!percentageValue && totalCount > 0) {
                 percentageValue =
-                    (attendedCount / totalCount) * 100;
-            }
+                    Number(
+                        Number(
+                            percentageValue
+                        ).toFixed(2)
+                    );
 
-            percentageValue = Number(
-                Number(percentageValue).toFixed(2)
-            );
+                return {
+                    present:
+                        presentCount,
 
-            setPresent(presentCount);
-            setLate(lateCount);
-            setAbsent(absentCount);
-            setTotal(totalCount);
-            setPercentage(percentageValue);
-        },
-        []
-    );
+                    late:
+                        lateCount,
+
+                    absent:
+                        absentCount,
+
+                    total:
+                        totalCount,
+
+                    percentage:
+                        percentageValue,
+                };
+            },
+            [getAttendanceStatus]
+        );
+
+    // =================================================
+    // APPLY STATISTICS TO STATE
+    // =================================================
+
+    const applyAttendanceStatistics =
+        useCallback(
+            (stats = {}, records = []) => {
+                const result =
+                    calculateAttendanceStatistics(
+                        stats,
+                        records
+                    );
+
+                setPresent(
+                    result.present
+                );
+
+                setLate(
+                    result.late
+                );
+
+                setAbsent(
+                    result.absent
+                );
+
+                setTotal(
+                    result.total
+                );
+
+                setPercentage(
+                    result.percentage
+                );
+
+                return result;
+            },
+            [calculateAttendanceStatistics]
+        );
 
     // =====================================================
     // LOAD STAFF SUBJECTS
     // =====================================================
 
-    const loadSubjects = useCallback(async () => {
-        setLoadingSubjects(true);
-        setError("");
-
-        try {
-            const response = await fetch(
-                `${API_BASE}/subject-allocations/staff`,
-                {
-                    method: "GET",
-                    headers: getHeaders(),
-                }
-            );
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(
-                    data.message ||
-                        "Unable to load subjects."
-                );
-            }
-
-            const rawSubjects =
-                Array.isArray(data)
-                    ? data
-                    : Array.isArray(data.data)
-                    ? data.data
-                    : Array.isArray(data.allocations)
-                    ? data.allocations
-                    : Array.isArray(data.subjects)
-                    ? data.subjects
-                    : [];
-
-            const normalizedSubjects =
-                rawSubjects.map((item) => ({
-                    ...item,
-
-                    allocation_id:
-                        item.allocation_id ??
-                        item.subject_allocation_id ??
-                        item.allocationId,
-
-                    subject_id:
-                        item.subject_id ??
-                        item.subjectId,
-
-                    class_id:
-                        item.class_id ??
-                        item.classId,
-
-                    class_year:
-                        item.class_year ??
-                        item.year ??
-                        item.classYear,
-
-                    class_section:
-                        item.class_section ??
-                        item.section ??
-                        item.classSection,
-
-                    academic_year:
-                        item.academic_year ??
-                        item.academicYear,
-
-                    semester:
-                        item.semester ??
-                        item.sem,
-                }));
-
-            setSubjects(normalizedSubjects);
-
-            // =============================================
-            // KEEP CURRENT SELECTION IF AVAILABLE
-            // =============================================
-
-            if (selectedAllocationId) {
-                const stillExists =
-                    normalizedSubjects.some(
-                        (item) =>
-                            String(item.allocation_id) ===
-                            String(selectedAllocationId)
-                    );
-
-                if (!stillExists) {
-                    setSelectedAllocationId("");
-                }
-            }
-        } catch (err) {
-            console.error(
-                "Staff subjects error:",
-                err
-            );
-
-            setError(
-                err.message ||
-                    "Unable to load subjects."
-            );
-        } finally {
-            setLoadingSubjects(false);
-        }
-    }, [getHeaders, selectedAllocationId]);
-
-    // =====================================================
-    // LOAD CURRENT QR
-    //
-    // silent = true:
-    //    used during 1-second polling
-    //
-    // silent = false:
-    //    used for initial/manual loading
-    // =====================================================
-
-    const loadQR = useCallback(
-        async (id, options = {}) => {
-            if (!id) {
-                return;
-            }
-
-            const { silent = false } = options;
-
-            const currentRequest =
-                ++qrRequestRef.current;
+    const loadSubjects =
+        useCallback(async () => {
+            setLoadingSubjects(true);
+            setError("");
 
             try {
-                if (!silent) {
-                    setLoadingQR(true);
-                }
+                const response =
+                    await fetch(
+                        `${API_BASE}/subject-allocations/staff`,
+                        {
+                            method: "GET",
+                            headers:
+                                getHeaders(),
+                        }
+                    );
 
-                const response = await fetch(
-                    `${API_BASE}/attendance-sessions/${id}/qr`,
-                    {
-                        method: "GET",
-                        headers: getHeaders(),
-                    }
-                );
-
-                const data = await response.json();
+                const data =
+                    await response.json();
 
                 if (!response.ok) {
                     throw new Error(
                         data.message ||
-                            "Unable to load QR code."
+                            "Unable to load subjects."
                     );
                 }
 
-                // =========================================
-                // IGNORE OLD REQUEST
-                // =========================================
+                const rawSubjects =
+                    Array.isArray(data)
+                        ? data
+                        : Array.isArray(
+                              data.data
+                          )
+                        ? data.data
+                        : Array.isArray(
+                              data.allocations
+                          )
+                        ? data.allocations
+                        : Array.isArray(
+                              data.subjects
+                          )
+                        ? data.subjects
+                        : [];
+
+                const normalizedSubjects =
+                    rawSubjects.map(
+                        (item) => ({
+                            ...item,
+
+                            allocation_id:
+                                item.allocation_id ??
+                                item.subject_allocation_id ??
+                                item.allocationId,
+
+                            subject_id:
+                                item.subject_id ??
+                                item.subjectId,
+
+                            class_id:
+                                item.class_id ??
+                                item.classId,
+
+                            class_year:
+                                item.class_year ??
+                                item.year ??
+                                item.classYear,
+
+                            class_section:
+                                item.class_section ??
+                                item.section ??
+                                item.classSection,
+
+                            academic_year:
+                                item.academic_year ??
+                                item.academicYear,
+
+                            semester:
+                                item.semester ??
+                                item.sem,
+                        })
+                    );
+
+                setSubjects(
+                    normalizedSubjects
+                );
 
                 if (
-                    currentRequest !==
-                    qrRequestRef.current
+                    selectedAllocationId
                 ) {
-                    return;
-                }
+                    const stillExists =
+                        normalizedSubjects.some(
+                            (item) =>
+                                String(
+                                    item.allocation_id
+                                ) ===
+                                String(
+                                    selectedAllocationId
+                                )
+                        );
 
-                // =========================================
-                // QR IMAGE
-                // =========================================
-
-                const image =
-                    data.qr_image ??
-                    data.qr_code ??
-                    data.qrImage ??
-                    data.image ??
-                    "";
-
-                // =========================================
-                // EXPIRY
-                // =========================================
-
-                const expiry =
-                    data.qr_expires_at ??
-                    data.qrExpiresAt ??
-                    data.expires_at ??
-                    data.expiresAt ??
-                    null;
-
-                setQrImage(image);
-                setQrExpiresAt(expiry);
-
-                // =========================================
-                // SESSION STATUS
-                // =========================================
-
-                if (data.status) {
-                    setSessionStatus(
-                        String(data.status).toUpperCase()
-                    );
+                    if (!stillExists) {
+                        setSelectedAllocationId(
+                            ""
+                        );
+                    }
                 }
             } catch (err) {
                 console.error(
-                    "QR loading error:",
+                    "Staff subjects error:",
                     err
                 );
 
-                // Do not destroy an already visible QR
-                // during silent polling.
-                if (!silent) {
-                    setError(
-                        err.message ||
-                            "Unable to load QR code."
-                    );
-                }
+                setError(
+                    err.message ||
+                        "Unable to load subjects."
+                );
             } finally {
-                if (!silent) {
-                    setLoadingQR(false);
-                }
+                setLoadingSubjects(
+                    false
+                );
             }
-        },
-        [getHeaders]
-    );
+        }, [
+            getHeaders,
+            selectedAllocationId,
+        ]);
+
+    // =====================================================
+    // LOAD CURRENT QR
+    // =====================================================
+
+    const loadQR =
+        useCallback(
+            async (
+                id,
+                options = {}
+            ) => {
+                if (!id) {
+                    return;
+                }
+
+                const {
+                    silent = false,
+                } = options;
+
+                const currentRequest =
+                    ++qrRequestRef.current;
+
+                try {
+                    if (!silent) {
+                        setLoadingQR(
+                            true
+                        );
+                    }
+
+                    const response =
+                        await fetch(
+                            `${API_BASE}/attendance-sessions/${id}/qr`,
+                            {
+                                method:
+                                    "GET",
+                                headers:
+                                    getHeaders(),
+                            }
+                        );
+
+                    const data =
+                        await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(
+                            data.message ||
+                                "Unable to load QR code."
+                        );
+                    }
+
+                    if (
+                        currentRequest !==
+                        qrRequestRef.current
+                    ) {
+                        return;
+                    }
+
+                    const image =
+                        data.qr_image ??
+                        data.qr_code ??
+                        data.qrImage ??
+                        data.image ??
+                        "";
+
+                    const expiry =
+                        data.qr_expires_at ??
+                        data.qrExpiresAt ??
+                        data.expires_at ??
+                        data.expiresAt ??
+                        null;
+
+                    setQrImage(
+                        image
+                    );
+
+                    setQrExpiresAt(
+                        expiry
+                    );
+
+                    if (data.status) {
+                        setSessionStatus(
+                            String(
+                                data.status
+                            ).toUpperCase()
+                        );
+                    }
+                } catch (err) {
+                    console.error(
+                        "QR loading error:",
+                        err
+                    );
+
+                    if (!silent) {
+                        setError(
+                            err.message ||
+                                "Unable to load QR code."
+                        );
+                    }
+                } finally {
+                    if (!silent) {
+                        setLoadingQR(
+                            false
+                        );
+                    }
+                }
+            },
+            [getHeaders]
+        );
+
+    // =====================================================
+    // LOAD LIVE ATTENDANCE RECORDS
+    //
+    // THIS IS THE IMPORTANT NEW PART.
+    //
+    // The browser polls:
+    //
+    // GET /api/attendance-records/session/:sessionId
+    //
+    // every 1 second.
+    //
+    // This endpoint reads the main `attendance` table.
+    // =====================================================
+
+    const loadLiveAttendance =
+        useCallback(
+            async (
+                id,
+                options = {}
+            ) => {
+                if (!id) {
+                    return null;
+                }
+
+                const {
+                    silent = false,
+                } = options;
+
+                if (
+                    attendanceRequestRef.current
+                ) {
+                    return null;
+                }
+
+                attendanceRequestRef.current =
+                    true;
+
+                const requestNumber =
+                    ++liveAttendanceRequestRef.current;
+
+                try {
+                    if (!silent) {
+                        setLoadingAttendance(
+                            true
+                        );
+                    }
+
+                    const response =
+                        await fetch(
+                            `${API_BASE}/attendance-records/session/${id}`,
+                            {
+                                method:
+                                    "GET",
+                                headers:
+                                    getHeaders(),
+                            }
+                        );
+
+                    const data =
+                        await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(
+                            data.message ||
+                                "Unable to load live attendance."
+                        );
+                    }
+
+                    // =========================================
+                    // IGNORE STALE RESPONSE
+                    // =========================================
+
+                    if (
+                        requestNumber !==
+                        liveAttendanceRequestRef.current
+                    ) {
+                        return null;
+                    }
+
+                    const records =
+                        extractAttendanceRecords(
+                            data
+                        );
+
+                    const sortedRecords =
+                        sortAttendanceRecords(
+                            records
+                        );
+
+                    setAttendanceRecords(
+                        sortedRecords
+                    );
+
+                    // =========================================
+                    // LATEST STUDENT
+                    // =========================================
+
+                    const newestRecord =
+                        sortedRecords.length >
+                        0
+                            ? sortedRecords[0]
+                            : null;
+
+                    setLatestAttendance(
+                        newestRecord
+                    );
+
+                    if (
+                        newestRecord
+                    ) {
+                        setLastAttendanceTime(
+                            getAttendanceTimestamp(
+                                newestRecord
+                            )
+                        );
+                    }
+
+                    // =========================================
+                    // CALCULATE STATISTICS
+                    // =========================================
+
+                    const statistics =
+                        calculateAttendanceStatistics(
+                            data,
+                            sortedRecords
+                        );
+
+                    setPresent(
+                        statistics.present
+                    );
+
+                    setLate(
+                        statistics.late
+                    );
+
+                    setAbsent(
+                        statistics.absent
+                    );
+
+                    setTotal(
+                        statistics.total
+                    );
+
+                    setPercentage(
+                        statistics.percentage
+                    );
+
+                    return {
+                        records:
+                            sortedRecords,
+
+                        latest:
+                            newestRecord,
+
+                        statistics,
+                    };
+                } catch (err) {
+                    console.error(
+                        "Live attendance error:",
+                        err
+                    );
+
+                    if (!silent) {
+                        setError(
+                            err.message ||
+                                "Unable to load live attendance."
+                        );
+                    }
+
+                    return null;
+                } finally {
+                    attendanceRequestRef.current =
+                        false;
+
+                    if (!silent) {
+                        setLoadingAttendance(
+                            false
+                        );
+                    }
+                }
+            },
+            [
+                getHeaders,
+                extractAttendanceRecords,
+                sortAttendanceRecords,
+                getAttendanceTimestamp,
+                calculateAttendanceStatistics,
+            ]
+        );
 
     // =====================================================
     // LOAD ATTENDANCE COUNT
+    //
+    // Kept for compatibility with the existing backend.
+    // Live records are now the primary source.
     // =====================================================
 
-    const loadAttendanceCount = useCallback(
-        async (id, options = {}) => {
-            if (!id) {
-                return;
-            }
+    const loadAttendanceCount =
+        useCallback(
+            async (
+                id,
+                options = {}
+            ) => {
+                if (!id) {
+                    return null;
+                }
 
-            const { silent = false } = options;
+                const {
+                    silent = false,
+                } = options;
 
-            if (attendanceRequestRef.current) {
-                return;
-            }
+                try {
+                    const liveResult =
+                        await loadLiveAttendance(
+                            id,
+                            {
+                                silent,
+                            }
+                        );
 
-            attendanceRequestRef.current = true;
-
-            try {
-                // =========================================
-                // PRIMARY COUNT ENDPOINT
-                // =========================================
-
-                let response = await fetch(
-                    `${API_BASE}/attendance/session/${id}/count`,
-                    {
-                        method: "GET",
-                        headers: getHeaders(),
+                    if (
+                        liveResult
+                    ) {
+                        return liveResult;
                     }
-                );
 
-                let data = await response.json();
+                    // =====================================
+                    // FALLBACK COUNT ENDPOINT
+                    // =====================================
 
-                // =========================================
-                // FALLBACK
-                // =========================================
+                    const response =
+                        await fetch(
+                            `${API_BASE}/attendance/session/${id}/count`,
+                            {
+                                method:
+                                    "GET",
+                                headers:
+                                    getHeaders(),
+                            }
+                        );
 
-                if (!response.ok) {
-                    response = await fetch(
-                        `${API_BASE}/attendance/session/${id}`,
-                        {
-                            method: "GET",
-                            headers: getHeaders(),
-                        }
-                    );
-
-                    data = await response.json();
+                    const data =
+                        await response.json();
 
                     if (!response.ok) {
                         throw new Error(
@@ -557,431 +1044,539 @@ const StaffDashboard = () => {
                                 "Unable to load attendance."
                         );
                     }
-                }
 
-                // =========================================
-                // EXTRACT RECORDS
-                // =========================================
+                    const records =
+                        extractAttendanceRecords(
+                            data
+                        );
 
-                const records =
-                    extractAttendanceRecords(data);
+                    const statistics =
+                        calculateAttendanceStatistics(
+                            data,
+                            records
+                        );
 
-                // =========================================
-                // APPLY STATS
-                // =========================================
-
-                applyAttendanceStatistics(
-                    data,
-                    records
-                );
-            } catch (err) {
-                console.error(
-                    "Attendance count error:",
-                    err
-                );
-
-                if (!silent) {
-                    setError(
-                        err.message ||
-                            "Unable to load attendance."
+                    setPresent(
+                        statistics.present
                     );
+
+                    setLate(
+                        statistics.late
+                    );
+
+                    setAbsent(
+                        statistics.absent
+                    );
+
+                    setTotal(
+                        statistics.total
+                    );
+
+                    setPercentage(
+                        statistics.percentage
+                    );
+
+                    return {
+                        records,
+                        latest:
+                            records[0] ||
+                            null,
+                        statistics,
+                    };
+                } catch (err) {
+                    console.error(
+                        "Attendance count error:",
+                        err
+                    );
+
+                    if (!silent) {
+                        setError(
+                            err.message ||
+                                "Unable to load attendance."
+                        );
+                    }
+
+                    return null;
                 }
-            } finally {
-                attendanceRequestRef.current =
-                    false;
-            }
-        },
-        [
-            getHeaders,
-            extractAttendanceRecords,
-            applyAttendanceStatistics,
-        ]
-    );
+            },
+            [
+                loadLiveAttendance,
+                getHeaders,
+                extractAttendanceRecords,
+                calculateAttendanceStatistics,
+            ]
+        );
 
     // =====================================================
     // LOAD ACTIVE SESSION
     // =====================================================
 
-    const loadActiveSession = useCallback(
-        async (options = {}) => {
-            const { silent = false } = options;
-
-            if (activeSessionRequestRef.current) {
-                return;
-            }
-
-            activeSessionRequestRef.current = true;
-
-            try {
-                const response = await fetch(
-                    `${API_BASE}/attendance-sessions/active`,
-                    {
-                        method: "GET",
-                        headers: getHeaders(),
-                    }
-                );
-
-                const data = await response.json();
-
-                if (!response.ok) {
-                    throw new Error(
-                        data.message ||
-                            "Unable to load active session."
-                    );
-                }
-
-                // =========================================
-                // NORMALIZE RESPONSE
-                // =========================================
-
-                const activeSession =
-                    data.session ??
-                    data.data ??
-                    data.active_session ??
-                    data.activeSession ??
-                    data;
-
-                // =========================================
-                // NO ACTIVE SESSION
-                // =========================================
+    const loadActiveSession =
+        useCallback(
+            async (
+                options = {}
+            ) => {
+                const {
+                    silent = false,
+                } = options;
 
                 if (
-                    !activeSession ||
-                    !activeSession.session_id
-                ) {
-                    setSessionId(null);
-                    setSessionStatus(null);
-                    setQrImage("");
-                    setQrExpiresAt(null);
-                    setSecondsLeft(0);
-
-                    return;
-                }
-
-                const activeAllocationId =
-                    activeSession.allocation_id ??
-                    activeSession.subject_allocation_id ??
-                    activeSession.allocationId;
-
-                // =========================================
-                // IF A SUBJECT IS SELECTED,
-                // ONLY SHOW ITS ACTIVE SESSION
-                // =========================================
-
-                if (
-                    selectedAllocationId &&
-                    activeAllocationId &&
-                    String(activeAllocationId) !==
-                        String(selectedAllocationId)
+                    activeSessionRequestRef.current
                 ) {
                     return;
                 }
 
-                const currentSessionId =
-                    activeSession.session_id;
-
-                const currentStatus = String(
-                    activeSession.status ??
-                        "ACTIVE"
-                ).toUpperCase();
-
-                setSessionId(currentSessionId);
-                setSessionStatus(currentStatus);
-
-                // =========================================
-                // ACTIVE SESSION
-                // =========================================
-
-                if (currentStatus === "ACTIVE") {
-                    await Promise.all([
-                        loadQR(
-                            currentSessionId,
-                            {
-                                silent,
-                            }
-                        ),
-                        loadAttendanceCount(
-                            currentSessionId,
-                            {
-                                silent,
-                            }
-                        ),
-                    ]);
-                }
-            } catch (err) {
-                console.error(
-                    "Active session error:",
-                    err
-                );
-
-                if (!silent) {
-                    setError(
-                        err.message ||
-                            "Unable to load active session."
-                    );
-                }
-            } finally {
                 activeSessionRequestRef.current =
-                    false;
-            }
-        },
-        [
-            getHeaders,
-            selectedAllocationId,
-            loadQR,
-            loadAttendanceCount,
-        ]
-    );
+                    true;
+
+                try {
+                    const response =
+                        await fetch(
+                            `${API_BASE}/attendance-sessions/active`,
+                            {
+                                method:
+                                    "GET",
+                                headers:
+                                    getHeaders(),
+                            }
+                        );
+
+                    const data =
+                        await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(
+                            data.message ||
+                                "Unable to load active session."
+                        );
+                    }
+
+                    const activeSession =
+                        data.session ??
+                        data.data ??
+                        data.active_session ??
+                        data.activeSession ??
+                        data;
+
+                    if (
+                        !activeSession ||
+                        !activeSession.session_id
+                    ) {
+                        setSessionId(
+                            null
+                        );
+
+                        setSessionStatus(
+                            null
+                        );
+
+                        setQrImage("");
+
+                        setQrExpiresAt(
+                            null
+                        );
+
+                        setSecondsLeft(
+                            0
+                        );
+
+                        return;
+                    }
+
+                    const activeAllocationId =
+                        activeSession.allocation_id ??
+                        activeSession.subject_allocation_id ??
+                        activeSession.allocationId;
+
+                    if (
+                        selectedAllocationId &&
+                        activeAllocationId &&
+                        String(
+                            activeAllocationId
+                        ) !==
+                            String(
+                                selectedAllocationId
+                            )
+                    ) {
+                        return;
+                    }
+
+                    const currentSessionId =
+                        activeSession.session_id;
+
+                    const currentStatus =
+                        String(
+                            activeSession.status ??
+                                "ACTIVE"
+                        ).toUpperCase();
+
+                    setSessionId(
+                        currentSessionId
+                    );
+
+                    setSessionStatus(
+                        currentStatus
+                    );
+
+                    if (
+                        currentStatus ===
+                        "ACTIVE"
+                    ) {
+                        await Promise.all(
+                            [
+                                loadQR(
+                                    currentSessionId,
+                                    {
+                                        silent,
+                                    }
+                                ),
+
+                                loadLiveAttendance(
+                                    currentSessionId,
+                                    {
+                                        silent,
+                                    }
+                                ),
+                            ]
+                        );
+                    }
+                } catch (err) {
+                    console.error(
+                        "Active session error:",
+                        err
+                    );
+
+                    if (!silent) {
+                        setError(
+                            err.message ||
+                                "Unable to load active session."
+                        );
+                    }
+                } finally {
+                    activeSessionRequestRef.current =
+                        false;
+                }
+            },
+            [
+                getHeaders,
+                selectedAllocationId,
+                loadQR,
+                loadLiveAttendance,
+            ]
+        );
 
     // =====================================================
     // START ATTENDANCE
     // =====================================================
 
-    const startAttendance = async () => {
-        clearMessages();
+    const startAttendance =
+        async () => {
+            clearMessages();
 
-        if (!selectedAllocationId) {
-            setError(
-                "Please select a subject/class first."
-            );
-            return;
-        }
+            if (
+                !selectedAllocationId
+            ) {
+                setError(
+                    "Please select a subject/class first."
+                );
+                return;
+            }
 
-        const selectedSubject =
-            subjects.find(
-                (item) =>
-                    String(item.allocation_id) ===
-                    String(selectedAllocationId)
-            );
+            const selectedSubject =
+                subjects.find(
+                    (item) =>
+                        String(
+                            item.allocation_id
+                        ) ===
+                        String(
+                            selectedAllocationId
+                        )
+                );
 
-        if (!selectedSubject) {
-            setError(
-                "Selected subject allocation was not found."
-            );
-            return;
-        }
+            if (!selectedSubject) {
+                setError(
+                    "Selected subject allocation was not found."
+                );
+                return;
+            }
 
-        setLoadingSession(true);
-
-        try {
-            const body = {
-                allocation_id:
-                    selectedSubject.allocation_id,
-
-                subject_id:
-                    selectedSubject.subject_id,
-
-                class_id:
-                    selectedSubject.class_id,
-
-                academic_year:
-                    selectedSubject.academic_year,
-
-                semester:
-                    selectedSubject.semester,
-            };
-
-            console.log(
-                "Starting attendance session:",
-                body
+            setLoadingSession(
+                true
             );
 
-            const response = await fetch(
-                `${API_BASE}/attendance-sessions`,
-                {
-                    method: "POST",
-                    headers: getHeaders(),
-                    body: JSON.stringify(body),
+            try {
+                const body = {
+                    allocation_id:
+                        selectedSubject.allocation_id,
+
+                    subject_id:
+                        selectedSubject.subject_id,
+
+                    class_id:
+                        selectedSubject.class_id,
+
+                    academic_year:
+                        selectedSubject.academic_year,
+
+                    semester:
+                        selectedSubject.semester,
+                };
+
+                console.log(
+                    "Starting attendance session:",
+                    body
+                );
+
+                const response =
+                    await fetch(
+                        `${API_BASE}/attendance-sessions`,
+                        {
+                            method:
+                                "POST",
+                            headers:
+                                getHeaders(),
+                            body:
+                                JSON.stringify(
+                                    body
+                                ),
+                        }
+                    );
+
+                const data =
+                    await response.json();
+
+                if (!response.ok) {
+                    throw new Error(
+                        data.message ||
+                            "Unable to start attendance session."
+                    );
                 }
-            );
 
-            const data = await response.json();
+                const createdSession =
+                    data.session ??
+                    data.data ??
+                    data;
 
-            if (!response.ok) {
-                throw new Error(
-                    data.message ||
-                        "Unable to start attendance session."
+                const newSessionId =
+                    createdSession.session_id ??
+                    data.session_id;
+
+                if (!newSessionId) {
+                    throw new Error(
+                        "Session was created but session ID was not returned."
+                    );
+                }
+
+                // =========================================
+                // RESET EVERYTHING
+                // =========================================
+
+                setPresent(0);
+                setLate(0);
+                setAbsent(0);
+                setTotal(0);
+                setPercentage(0);
+
+                setAttendanceRecords(
+                    []
+                );
+
+                setLatestAttendance(
+                    null
+                );
+
+                setLastAttendanceTime(
+                    null
+                );
+
+                setHasFinalStatistics(
+                    false
+                );
+
+                setQrImage("");
+                setQrExpiresAt(
+                    null
+                );
+                setSecondsLeft(
+                    0
+                );
+
+                setSessionId(
+                    newSessionId
+                );
+
+                setSessionStatus(
+                    "ACTIVE"
+                );
+
+                setMessage(
+                    "Attendance session started successfully."
+                );
+
+                // =========================================
+                // LOAD FIRST QR
+                // =========================================
+
+                await loadQR(
+                    newSessionId
+                );
+
+                // =========================================
+                // LOAD INITIAL ATTENDANCE
+                // =========================================
+
+                await loadLiveAttendance(
+                    newSessionId
+                );
+            } catch (err) {
+                console.error(
+                    "Start attendance error:",
+                    err
+                );
+
+                setError(
+                    err.message ||
+                        "Unable to start attendance."
+                );
+            } finally {
+                setLoadingSession(
+                    false
                 );
             }
-
-            // =========================================
-            // NORMALIZE CREATED SESSION
-            // =========================================
-
-            const createdSession =
-                data.session ??
-                data.data ??
-                data;
-
-            const newSessionId =
-                createdSession.session_id ??
-                data.session_id;
-
-            if (!newSessionId) {
-                throw new Error(
-                    "Session was created but session ID was not returned."
-                );
-            }
-
-            // =========================================
-            // RESET STATISTICS
-            // =========================================
-
-            setPresent(0);
-            setLate(0);
-            setAbsent(0);
-            setTotal(0);
-            setPercentage(0);
-
-            setHasFinalStatistics(false);
-
-            setQrImage("");
-            setQrExpiresAt(null);
-            setSecondsLeft(0);
-
-            setSessionId(newSessionId);
-            setSessionStatus("ACTIVE");
-
-            setMessage(
-                "Attendance session started successfully."
-            );
-
-            // =========================================
-            // LOAD FIRST QR
-            // =========================================
-
-            await loadQR(newSessionId);
-
-            // =========================================
-            // LOAD INITIAL ATTENDANCE
-            // =========================================
-
-            await loadAttendanceCount(
-                newSessionId
-            );
-        } catch (err) {
-            console.error(
-                "Start attendance error:",
-                err
-            );
-
-            setError(
-                err.message ||
-                    "Unable to start attendance."
-            );
-        } finally {
-            setLoadingSession(false);
-        }
-    };
+        };
 
     // =====================================================
     // CLOSE ATTENDANCE
     // =====================================================
 
-    const closeAttendance = async () => {
-        clearMessages();
+    const closeAttendance =
+        async () => {
+            clearMessages();
 
-        if (!sessionId) {
-            return;
-        }
-
-        const shouldClose = window.confirm(
-            "Are you sure you want to close this attendance session?"
-        );
-
-        if (!shouldClose) {
-            return;
-        }
-
-        setLoadingSession(true);
-
-        try {
-            // =========================================
-            // FIRST GET FINAL STATISTICS
-            // =========================================
-
-            await loadAttendanceCount(sessionId);
-
-            const finalPresent = present;
-            const finalLate = late;
-            const finalAbsent = absent;
-            const finalTotal = total;
-            const finalPercentage = percentage;
-
-            // =========================================
-            // CLOSE SESSION
-            // =========================================
-
-            const response = await fetch(
-                `${API_BASE}/attendance-sessions/${sessionId}/close`,
-                {
-                    method: "PATCH",
-                    headers: getHeaders(),
-                }
-            );
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(
-                    data.message ||
-                        "Unable to close attendance session."
-                );
+            if (!sessionId) {
+                return;
             }
 
-            // =========================================
-            // PRESERVE FINAL STATISTICS
-            // =========================================
+            const shouldClose =
+                window.confirm(
+                    "Are you sure you want to close this attendance session?"
+                );
 
-            setPresent(finalPresent);
-            setLate(finalLate);
-            setAbsent(finalAbsent);
-            setTotal(finalTotal);
-            setPercentage(finalPercentage);
+            if (!shouldClose) {
+                return;
+            }
 
-            setHasFinalStatistics(true);
-
-            setSessionStatus("CLOSED");
-
-            setQrImage("");
-            setQrExpiresAt(null);
-            setSecondsLeft(0);
-
-            setMessage(
-                "Attendance session closed successfully."
+            setLoadingSession(
+                true
             );
-
-            // =========================================
-            // VERIFY FINAL DATA
-            // =========================================
 
             try {
-                await loadAttendanceCount(
-                    sessionId,
-                    {
-                        silent: true,
-                    }
+                // =========================================
+                // GET FINAL DATA DIRECTLY
+                //
+                // Do NOT depend on React state immediately
+                // after an async state update.
+                // =========================================
+
+                const finalResult =
+                    await loadLiveAttendance(
+                        sessionId
+                    );
+
+                const finalStatistics =
+                    finalResult?.statistics ??
+                    calculateAttendanceStatistics(
+                        {},
+                        finalResult?.records ??
+                            attendanceRecords
+                    );
+
+                // =========================================
+                // CLOSE SESSION
+                // =========================================
+
+                const response =
+                    await fetch(
+                        `${API_BASE}/attendance-sessions/${sessionId}/close`,
+                        {
+                            method:
+                                "PATCH",
+                            headers:
+                                getHeaders(),
+                        }
+                    );
+
+                const data =
+                    await response.json();
+
+                if (!response.ok) {
+                    throw new Error(
+                        data.message ||
+                            "Unable to close attendance session."
+                    );
+                }
+
+                // =========================================
+                // PRESERVE FINAL STATISTICS
+                // =========================================
+
+                setPresent(
+                    finalStatistics.present
                 );
-            } catch (verifyError) {
-                console.warn(
-                    "Final attendance verification failed:",
-                    verifyError
+
+                setLate(
+                    finalStatistics.late
+                );
+
+                setAbsent(
+                    finalStatistics.absent
+                );
+
+                setTotal(
+                    finalStatistics.total
+                );
+
+                setPercentage(
+                    finalStatistics.percentage
+                );
+
+                setHasFinalStatistics(
+                    true
+                );
+
+                setSessionStatus(
+                    "CLOSED"
+                );
+
+                setQrImage("");
+
+                setQrExpiresAt(
+                    null
+                );
+
+                setSecondsLeft(
+                    0
+                );
+
+                setMessage(
+                    "Attendance session closed successfully."
+                );
+            } catch (err) {
+                console.error(
+                    "Close attendance error:",
+                    err
+                );
+
+                setError(
+                    err.message ||
+                        "Unable to close attendance."
+                );
+            } finally {
+                setLoadingSession(
+                    false
                 );
             }
-        } catch (err) {
-            console.error(
-                "Close attendance error:",
-                err
-            );
-
-            setError(
-                err.message ||
-                    "Unable to close attendance."
-            );
-        } finally {
-            setLoadingSession(false);
-        }
-    };
+        };
 
     // =====================================================
     // INITIAL LOAD
@@ -992,7 +1587,7 @@ const StaffDashboard = () => {
     }, [loadSubjects]);
 
     // =====================================================
-    // LOAD ACTIVE SESSION AFTER SUBJECT LOAD
+    // LOAD ACTIVE SESSION AFTER SUBJECTS
     // =====================================================
 
     useEffect(() => {
@@ -1009,24 +1604,28 @@ const StaffDashboard = () => {
 
     // =====================================================
     // ACTIVE SESSION MONITOR
-    //
-    // This checks whether another tab/session has started
-    // or whether the backend session changed.
     // =====================================================
 
     useEffect(() => {
-        if (activeSessionTimerRef.current) {
+        if (
+            activeSessionTimerRef.current
+        ) {
             clearInterval(
                 activeSessionTimerRef.current
             );
         }
 
         activeSessionTimerRef.current =
-            setInterval(() => {
-                loadActiveSession({
-                    silent: true,
-                });
-            }, 5000);
+            setInterval(
+                () => {
+                    loadActiveSession(
+                        {
+                            silent: true,
+                        }
+                    );
+                },
+                5000
+            );
 
         return () => {
             if (
@@ -1043,68 +1642,52 @@ const StaffDashboard = () => {
     }, [loadActiveSession]);
 
     // =====================================================
-    // QR REFRESH
-    //
-    // IMPORTANT:
-    //
-    // Every 1 second the staff dashboard asks the backend:
-    //
-    // GET /attendance-sessions/:id/qr
-    //
-    // If QR #1 is still valid:
-    //     backend returns QR #1
-    //
-    // If student scanned QR #1:
-    //     backend has already generated QR #2
-    //     dashboard receives QR #2
-    //
-    // If nobody scanned QR #1 for 15 seconds:
-    //     backend rotates to QR #2
-    //     dashboard receives QR #2
-    //
-    // Therefore no manual refresh is required.
+    // QR REFRESH EVERY 1 SECOND
     // =====================================================
 
     useEffect(() => {
         if (
             !sessionId ||
-            sessionStatus !== "ACTIVE"
+            sessionStatus !==
+                "ACTIVE"
         ) {
             return;
         }
 
-        // =============================================
-        // CLEAR OLD TIMER
-        // =============================================
-
-        if (qrTimerRef.current) {
-            clearInterval(qrTimerRef.current);
-            qrTimerRef.current = null;
+        if (
+            qrTimerRef.current
+        ) {
+            clearInterval(
+                qrTimerRef.current
+            );
         }
-
-        // =============================================
-        // INITIAL QR LOAD
-        // =============================================
 
         loadQR(sessionId);
 
-        // =============================================
-        // CHECK QR EVERY 1 SECOND
-        // =============================================
-
-        qrTimerRef.current = setInterval(() => {
-            loadQR(sessionId, {
-                silent: true,
-            });
-        }, 1000);
+        qrTimerRef.current =
+            setInterval(
+                () => {
+                    loadQR(
+                        sessionId,
+                        {
+                            silent:
+                                true,
+                        }
+                    );
+                },
+                1000
+            );
 
         return () => {
-            if (qrTimerRef.current) {
+            if (
+                qrTimerRef.current
+            ) {
                 clearInterval(
                     qrTimerRef.current
                 );
 
-                qrTimerRef.current = null;
+                qrTimerRef.current =
+                    null;
             }
         };
     }, [
@@ -1114,178 +1697,163 @@ const StaffDashboard = () => {
     ]);
 
     // =====================================================
-    // LIVE ATTENDANCE REFRESH
+    // LIVE ATTENDANCE REFRESH EVERY 1 SECOND
     //
-    // Attendance count is refreshed every 2 seconds.
+    // THIS MAKES THE STAFF PAGE UPDATE QUICKLY AFTER
+    // A STUDENT SCANS THE QR.
     // =====================================================
 
     useEffect(() => {
         if (
             !sessionId ||
-            sessionStatus !== "ACTIVE"
+            sessionStatus !==
+                "ACTIVE"
         ) {
             return;
         }
 
-        if (countTimerRef.current) {
+        if (
+            countTimerRef.current
+        ) {
             clearInterval(
                 countTimerRef.current
             );
         }
 
-        loadAttendanceCount(sessionId);
+        loadLiveAttendance(
+            sessionId
+        );
 
         countTimerRef.current =
-            setInterval(() => {
-                loadAttendanceCount(
-                    sessionId,
-                    {
-                        silent: true,
-                    }
-                );
-            }, 2000);
+            setInterval(
+                () => {
+                    loadLiveAttendance(
+                        sessionId,
+                        {
+                            silent:
+                                true,
+                        }
+                    );
+                },
+                1000
+            );
 
         return () => {
-            if (countTimerRef.current) {
+            if (
+                countTimerRef.current
+            ) {
                 clearInterval(
                     countTimerRef.current
                 );
 
-                countTimerRef.current = null;
+                countTimerRef.current =
+                    null;
             }
         };
     }, [
         sessionId,
         sessionStatus,
-        loadAttendanceCount,
+        loadLiveAttendance,
     ]);
 
     // =====================================================
     // QR COUNTDOWN
-    //
-    // Displays:
-    //
-    // 15
-    // 14
-    // 13
-    // ...
-    // 1
-    // 0
-    //
-    // The backend remains authoritative for actual QR
-    // validity. This timer is only the visual countdown.
     // =====================================================
 
     useEffect(() => {
         if (
             !qrExpiresAt ||
-            sessionStatus !== "ACTIVE"
+            sessionStatus !==
+                "ACTIVE"
         ) {
-            setSecondsLeft(0);
+            setSecondsLeft(
+                0
+            );
             return;
         }
 
-        if (countdownTimerRef.current) {
+        if (
+            countdownTimerRef.current
+        ) {
             clearInterval(
                 countdownTimerRef.current
             );
         }
 
-        const calculateRemaining = () => {
-            let expiryTime;
-
-            // =========================================
-            // DATE OBJECT
-            // =========================================
-
-            if (
-                qrExpiresAt instanceof Date
-            ) {
-                expiryTime =
-                    qrExpiresAt.getTime();
-            }
-
-            // =========================================
-            // STRING
-            // =========================================
-
-            else if (
-                typeof qrExpiresAt === "string"
-            ) {
-                let value =
-                    qrExpiresAt.trim();
-
-                // =====================================
-                // MySQL DATETIME
-                // Example:
-                // 2026-09-15 18:20:30
-                // =====================================
+        const calculateRemaining =
+            () => {
+                let expiryTime;
 
                 if (
-                    /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(
-                        value
-                    )
+                    qrExpiresAt instanceof
+                    Date
                 ) {
-                    value =
-                        value.replace(
-                            " ",
-                            "T"
-                        );
+                    expiryTime =
+                        qrExpiresAt.getTime();
+                } else if (
+                    typeof qrExpiresAt ===
+                    "string"
+                ) {
+                    let value =
+                        qrExpiresAt.trim();
+
+                    if (
+                        /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(
+                            value
+                        )
+                    ) {
+                        value =
+                            value.replace(
+                                " ",
+                                "T"
+                            );
+                    }
+
+                    expiryTime =
+                        new Date(
+                            value
+                        ).getTime();
+                } else if (
+                    typeof qrExpiresAt ===
+                    "number"
+                ) {
+                    expiryTime =
+                        qrExpiresAt;
+                } else {
+                    expiryTime =
+                        NaN;
                 }
 
-                expiryTime =
-                    new Date(value).getTime();
-            }
+                if (
+                    !Number.isFinite(
+                        expiryTime
+                    )
+                ) {
+                    setSecondsLeft(
+                        0
+                    );
+                    return;
+                }
 
-            // =========================================
-            // NUMBER
-            // =========================================
+                const difference =
+                    expiryTime -
+                    Date.now();
 
-            else if (
-                typeof qrExpiresAt ===
-                "number"
-            ) {
-                expiryTime = qrExpiresAt;
-            }
+                const seconds =
+                    Math.max(
+                        0,
+                        Math.ceil(
+                            difference /
+                                1000
+                        )
+                    );
 
-            // =========================================
-            // INVALID
-            // =========================================
-
-            else {
-                expiryTime = NaN;
-            }
-
-            if (
-                !Number.isFinite(expiryTime)
-            ) {
-                setSecondsLeft(0);
-                return;
-            }
-
-            const difference =
-                expiryTime -
-                Date.now();
-
-            const seconds = Math.max(
-                0,
-                Math.ceil(
-                    difference / 1000
-                )
-            );
-
-            setSecondsLeft(seconds);
-        };
-
-        // =============================================
-        // CALCULATE IMMEDIATELY
-        // =============================================
+                setSecondsLeft(
+                    seconds
+                );
+            };
 
         calculateRemaining();
-
-        // =============================================
-        // EVERY 1 SECOND
-        // =============================================
 
         countdownTimerRef.current =
             setInterval(
@@ -1316,13 +1884,17 @@ const StaffDashboard = () => {
 
     useEffect(() => {
         return () => {
-            if (qrTimerRef.current) {
+            if (
+                qrTimerRef.current
+            ) {
                 clearInterval(
                     qrTimerRef.current
                 );
             }
 
-            if (countTimerRef.current) {
+            if (
+                countTimerRef.current
+            ) {
                 clearInterval(
                     countTimerRef.current
                 );
@@ -1353,8 +1925,12 @@ const StaffDashboard = () => {
     const selectedSubject =
         subjects.find(
             (item) =>
-                String(item.allocation_id) ===
-                String(selectedAllocationId)
+                String(
+                    item.allocation_id
+                ) ===
+                String(
+                    selectedAllocationId
+                )
         );
 
     // =====================================================
@@ -1362,8 +1938,74 @@ const StaffDashboard = () => {
     // =====================================================
 
     const isSessionActive =
-        sessionId &&
-        sessionStatus === "ACTIVE";
+        Boolean(
+            sessionId &&
+                sessionStatus ===
+                    "ACTIVE"
+        );
+
+    // =====================================================
+    // FORMAT DATE / TIME
+    // =====================================================
+
+    const formatDateTime =
+        useCallback(
+            (value) => {
+                if (!value) {
+                    return "-";
+                }
+
+                let dateValue =
+                    String(value);
+
+                if (
+                    /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(
+                        dateValue
+                    )
+                ) {
+                    dateValue =
+                        dateValue.replace(
+                            " ",
+                            "T"
+                        );
+                }
+
+                const date =
+                    new Date(
+                        dateValue
+                    );
+
+                if (
+                    !Number.isFinite(
+                        date.getTime()
+                    )
+                ) {
+                    return String(
+                        value
+                    );
+                }
+
+                return date.toLocaleString();
+            },
+            []
+        );
+
+    // =====================================================
+    // GET DISPLAY STUDENT DEPARTMENT
+    // =====================================================
+
+    const getStudentDepartment =
+        useCallback(
+            (record) => {
+                return (
+                    record.department_name ??
+                    record.department ??
+                    record.student_department ??
+                    "-"
+                );
+            },
+            []
+        );
 
     // =====================================================
     // UI
@@ -1372,39 +2014,53 @@ const StaffDashboard = () => {
     return (
         <div
             style={{
-                minHeight: "100vh",
-                background: "#f5f7fb",
-                padding: "24px",
+                minHeight:
+                    "100vh",
+                background:
+                    "#f5f7fb",
+                padding:
+                    "24px",
             }}
         >
-            {/* =================================================
-                HEADER
-            ================================================= */}
-
             <div
                 style={{
-                    maxWidth: "1400px",
-                    margin: "0 auto",
+                    maxWidth:
+                        "1400px",
+                    margin:
+                        "0 auto",
                 }}
             >
+                {/* =================================================
+                    HEADER
+                ================================================= */}
+
                 <div
                     style={{
-                        display: "flex",
+                        display:
+                            "flex",
                         justifyContent:
                             "space-between",
-                        alignItems: "center",
-                        marginBottom: "24px",
-                        gap: "20px",
-                        flexWrap: "wrap",
+                        alignItems:
+                            "center",
+                        marginBottom:
+                            "24px",
+                        gap:
+                            "20px",
+                        flexWrap:
+                            "wrap",
                     }}
                 >
                     <div>
                         <h1
                             style={{
-                                margin: 0,
-                                fontSize: "30px",
-                                fontWeight: 700,
-                                color: "#172033",
+                                margin:
+                                    0,
+                                fontSize:
+                                    "30px",
+                                fontWeight:
+                                    700,
+                                color:
+                                    "#172033",
                             }}
                         >
                             Staff Attendance
@@ -1414,7 +2070,8 @@ const StaffDashboard = () => {
                             style={{
                                 margin:
                                     "6px 0 0",
-                                color: "#667085",
+                                color:
+                                    "#667085",
                             }}
                         >
                             Welcome{" "}
@@ -1430,25 +2087,39 @@ const StaffDashboard = () => {
                             clearMessages();
                             loadSubjects();
                             loadActiveSession();
+
+                            if (
+                                sessionId
+                            ) {
+                                loadLiveAttendance(
+                                    sessionId
+                                );
+                            }
                         }}
                         disabled={
                             loadingSubjects ||
-                            loadingSession
+                            loadingSession ||
+                            loadingAttendance
                         }
                         style={{
-                            border: "none",
+                            border:
+                                "none",
                             background:
                                 "#ffffff",
-                            color: "#344054",
+                            color:
+                                "#344054",
                             padding:
                                 "11px 16px",
                             borderRadius:
                                 "10px",
-                            cursor: "pointer",
-                            display: "flex",
+                            cursor:
+                                "pointer",
+                            display:
+                                "flex",
                             alignItems:
                                 "center",
-                            gap: "8px",
+                            gap:
+                                "8px",
                             boxShadow:
                                 "0 2px 8px rgba(0,0,0,0.08)",
                         }}
@@ -1469,7 +2140,8 @@ const StaffDashboard = () => {
                                 "#ecfdf3",
                             border:
                                 "1px solid #abefc6",
-                            color: "#067647",
+                            color:
+                                "#067647",
                             padding:
                                 "12px 16px",
                             borderRadius:
@@ -1489,7 +2161,8 @@ const StaffDashboard = () => {
                                 "#fef3f2",
                             border:
                                 "1px solid #fecdca",
-                            color: "#b42318",
+                            color:
+                                "#b42318",
                             padding:
                                 "12px 16px",
                             borderRadius:
@@ -1522,23 +2195,27 @@ const StaffDashboard = () => {
                 >
                     <div
                         style={{
-                            display: "flex",
+                            display:
+                                "flex",
                             alignItems:
                                 "center",
-                            gap: "10px",
+                            gap:
+                                "10px",
                             marginBottom:
                                 "12px",
                         }}
                     >
                         <FaBook
                             style={{
-                                color: "#4f46e5",
+                                color:
+                                    "#4f46e5",
                             }}
                         />
 
                         <h2
                             style={{
-                                margin: 0,
+                                margin:
+                                    0,
                                 fontSize:
                                     "18px",
                             }}
@@ -1549,8 +2226,10 @@ const StaffDashboard = () => {
 
                     <div
                         style={{
-                            display: "flex",
-                            gap: "12px",
+                            display:
+                                "flex",
+                            gap:
+                                "12px",
                             flexWrap:
                                 "wrap",
                         }}
@@ -1571,7 +2250,8 @@ const StaffDashboard = () => {
                                 isSessionActive
                             }
                             style={{
-                                flex: 1,
+                                flex:
+                                    1,
                                 minWidth:
                                     "280px",
                                 padding:
@@ -1593,7 +2273,9 @@ const StaffDashboard = () => {
                             </option>
 
                             {subjects.map(
-                                (item) => (
+                                (
+                                    item
+                                ) => (
                                     <option
                                         key={
                                             item.allocation_id
@@ -1650,7 +2332,8 @@ const StaffDashboard = () => {
                                         "center",
                                     justifyContent:
                                         "center",
-                                    gap: "8px",
+                                    gap:
+                                        "8px",
                                     fontWeight:
                                         600,
                                     minWidth:
@@ -1691,7 +2374,8 @@ const StaffDashboard = () => {
                                         "center",
                                     justifyContent:
                                         "center",
-                                    gap: "8px",
+                                    gap:
+                                        "8px",
                                     fontWeight:
                                         600,
                                     minWidth:
@@ -1733,7 +2417,8 @@ const StaffDashboard = () => {
                                     "grid",
                                 gridTemplateColumns:
                                     "repeat(auto-fit, minmax(180px, 1fr))",
-                                gap: "15px",
+                                gap:
+                                    "15px",
                             }}
                         >
                             <div>
@@ -1873,10 +2558,12 @@ const StaffDashboard = () => {
 
                 <div
                     style={{
-                        display: "grid",
+                        display:
+                            "grid",
                         gridTemplateColumns:
                             "repeat(auto-fit, minmax(180px, 1fr))",
-                        gap: "16px",
+                        gap:
+                            "16px",
                         marginBottom:
                             "20px",
                     }}
@@ -2194,10 +2881,12 @@ const StaffDashboard = () => {
 
                 <div
                     style={{
-                        display: "grid",
+                        display:
+                            "grid",
                         gridTemplateColumns:
                             "minmax(320px, 1fr) minmax(320px, 1fr)",
-                        gap: "20px",
+                        gap:
+                            "20px",
                     }}
                 >
                     {/* =================================================
@@ -2226,7 +2915,8 @@ const StaffDashboard = () => {
                                     "center",
                                 alignItems:
                                     "center",
-                                gap: "10px",
+                                gap:
+                                    "10px",
                                 marginBottom:
                                     "8px",
                             }}
@@ -2241,7 +2931,8 @@ const StaffDashboard = () => {
 
                             <h2
                                 style={{
-                                    margin: 0,
+                                    margin:
+                                        0,
                                     fontSize:
                                         "21px",
                                 }}
@@ -2261,10 +2952,6 @@ const StaffDashboard = () => {
                             Scan this QR from the
                             student application.
                         </p>
-
-                        {/* =========================================
-                            ACTIVE QR
-                        ========================================= */}
 
                         {isSessionActive ? (
                             <>
@@ -2294,8 +2981,6 @@ const StaffDashboard = () => {
                                                     "1px solid #e4e7ec",
                                                 borderRadius:
                                                     "16px",
-                                                position:
-                                                    "relative",
                                             }}
                                         >
                                             <img
@@ -2316,10 +3001,6 @@ const StaffDashboard = () => {
                                             />
                                         </div>
 
-                                        {/* =================================
-                                            COUNTDOWN
-                                        ================================= */}
-
                                         <div
                                             style={{
                                                 marginTop:
@@ -2330,7 +3011,8 @@ const StaffDashboard = () => {
                                                     "center",
                                                 alignItems:
                                                     "center",
-                                                gap: "10px",
+                                                gap:
+                                                    "10px",
                                             }}
                                         >
                                             <FaClock />
@@ -2506,7 +3188,8 @@ const StaffDashboard = () => {
                                     "flex",
                                 alignItems:
                                     "center",
-                                gap: "10px",
+                                gap:
+                                    "10px",
                                 marginBottom:
                                     "20px",
                             }}
@@ -2520,7 +3203,8 @@ const StaffDashboard = () => {
 
                             <h2
                                 style={{
-                                    margin: 0,
+                                    margin:
+                                        0,
                                     fontSize:
                                         "21px",
                                 }}
@@ -2730,7 +3414,7 @@ const StaffDashboard = () => {
                             </div>
                         </div>
 
-                        {/* TOTAL */}
+                        {/* PERCENTAGE */}
 
                         <div
                             style={{
@@ -2797,8 +3481,6 @@ const StaffDashboard = () => {
                             </div>
                         </div>
 
-                        {/* FINAL STATUS */}
-
                         {hasFinalStatistics && (
                             <div
                                 style={{
@@ -2818,7 +3500,8 @@ const StaffDashboard = () => {
                                         "flex",
                                     alignItems:
                                         "center",
-                                    gap: "10px",
+                                    gap:
+                                        "10px",
                                 }}
                             >
                                 <FaCheckCircle />
@@ -2834,7 +3517,662 @@ const StaffDashboard = () => {
                 </div>
 
                 {/* =================================================
-                    QUICK ACTIONS / SESSION INFORMATION
+                    LIVE ATTENDANCE
+                ================================================= */}
+
+                <div
+                    style={{
+                        background:
+                            "#ffffff",
+                        borderRadius:
+                            "16px",
+                        padding:
+                            "24px",
+                        marginTop:
+                            "20px",
+                        boxShadow:
+                            "0 4px 15px rgba(0,0,0,0.06)",
+                    }}
+                >
+                    <div
+                        style={{
+                            display:
+                                "flex",
+                            justifyContent:
+                                "space-between",
+                            alignItems:
+                                "center",
+                            gap:
+                                "15px",
+                            marginBottom:
+                                "20px",
+                            flexWrap:
+                                "wrap",
+                        }}
+                    >
+                        <div
+                            style={{
+                                display:
+                                    "flex",
+                                alignItems:
+                                    "center",
+                                gap:
+                                    "10px",
+                            }}
+                        >
+                            <FaHistory
+                                style={{
+                                    color:
+                                        "#4f46e5",
+                                }}
+                            />
+
+                            <h2
+                                style={{
+                                    margin:
+                                        0,
+                                    fontSize:
+                                        "21px",
+                                }}
+                            >
+                                Live Attendance
+                            </h2>
+                        </div>
+
+                        {isSessionActive && (
+                            <div
+                                style={{
+                                    display:
+                                        "flex",
+                                    alignItems:
+                                        "center",
+                                    gap:
+                                        "8px",
+                                    fontSize:
+                                        "13px",
+                                    color:
+                                        "#067647",
+                                    background:
+                                        "#ecfdf3",
+                                    border:
+                                        "1px solid #abefc6",
+                                    padding:
+                                        "7px 11px",
+                                    borderRadius:
+                                        "999px",
+                                }}
+                            >
+                                <span
+                                    style={{
+                                        width:
+                                            "8px",
+                                        height:
+                                            "8px",
+                                        borderRadius:
+                                            "50%",
+                                        background:
+                                            "#16a34a",
+                                    }}
+                                />
+
+                                Live · Updates every
+                                second
+                            </div>
+                        )}
+                    </div>
+
+                    {/* =================================================
+                        LATEST SCAN
+                    ================================================= */}
+
+                    {latestAttendance ? (
+                        <div
+                            style={{
+                                border:
+                                    "1px solid #d1fadf",
+                                background:
+                                    "#f6fef9",
+                                borderRadius:
+                                    "14px",
+                                padding:
+                                    "18px",
+                                marginBottom:
+                                    "20px",
+                            }}
+                        >
+                            <div
+                                style={{
+                                    display:
+                                        "flex",
+                                    alignItems:
+                                        "center",
+                                    gap:
+                                        "10px",
+                                    marginBottom:
+                                        "14px",
+                                }}
+                            >
+                                <FaCheckCircle
+                                    style={{
+                                        color:
+                                            "#16a34a",
+                                    }}
+                                />
+
+                                <strong
+                                    style={{
+                                        color:
+                                            "#067647",
+                                    }}
+                                >
+                                    Latest Attendance
+                                </strong>
+                            </div>
+
+                            <div
+                                style={{
+                                    display:
+                                        "grid",
+                                    gridTemplateColumns:
+                                        "repeat(auto-fit, minmax(180px, 1fr))",
+                                    gap:
+                                        "15px",
+                                }}
+                            >
+                                <div>
+                                    <small
+                                        style={{
+                                            color:
+                                                "#667085",
+                                        }}
+                                    >
+                                        Student
+                                    </small>
+
+                                    <div
+                                        style={{
+                                            fontWeight:
+                                                700,
+                                            fontSize:
+                                                "17px",
+                                            marginTop:
+                                                "4px",
+                                        }}
+                                    >
+                                        {getStudentName(
+                                            latestAttendance
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <small
+                                        style={{
+                                            color:
+                                                "#667085",
+                                        }}
+                                    >
+                                        Register Number
+                                    </small>
+
+                                    <div
+                                        style={{
+                                            fontWeight:
+                                                600,
+                                            marginTop:
+                                                "4px",
+                                        }}
+                                    >
+                                        {getRegisterNumber(
+                                            latestAttendance
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <small
+                                        style={{
+                                            color:
+                                                "#667085",
+                                        }}
+                                    >
+                                        Status
+                                    </small>
+
+                                    <div
+                                        style={{
+                                            fontWeight:
+                                                700,
+                                            marginTop:
+                                                "4px",
+                                            color:
+                                                getAttendanceStatus(
+                                                    latestAttendance
+                                                ) ===
+                                                "LATE"
+                                                    ? "#d97706"
+                                                    : "#16a34a",
+                                        }}
+                                    >
+                                        {getAttendanceStatus(
+                                            latestAttendance
+                                        ) ||
+                                            "PRESENT"}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <small
+                                        style={{
+                                            color:
+                                                "#667085",
+                                        }}
+                                    >
+                                        Scan Time
+                                    </small>
+
+                                    <div
+                                        style={{
+                                            fontWeight:
+                                                600,
+                                            marginTop:
+                                                "4px",
+                                        }}
+                                    >
+                                        {formatDateTime(
+                                            getAttendanceTimestamp(
+                                                latestAttendance
+                                            )
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <small
+                                        style={{
+                                            color:
+                                                "#667085",
+                                        }}
+                                    >
+                                        Department
+                                    </small>
+
+                                    <div
+                                        style={{
+                                            fontWeight:
+                                                600,
+                                            marginTop:
+                                                "4px",
+                                        }}
+                                    >
+                                        {getStudentDepartment(
+                                            latestAttendance
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <small
+                                        style={{
+                                            color:
+                                                "#667085",
+                                        }}
+                                    >
+                                        Attendance ID
+                                    </small>
+
+                                    <div
+                                        style={{
+                                            fontWeight:
+                                                600,
+                                            marginTop:
+                                                "4px",
+                                        }}
+                                    >
+                                        {getAttendanceId(
+                                            latestAttendance
+                                        ) ??
+                                            "-"}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        <div
+                            style={{
+                                background:
+                                    "#f8fafc",
+                                border:
+                                    "1px solid #eaecf0",
+                                borderRadius:
+                                    "12px",
+                                padding:
+                                    "22px",
+                                textAlign:
+                                    "center",
+                                color:
+                                    "#667085",
+                                marginBottom:
+                                    "20px",
+                            }}
+                        >
+                            <FaUserGraduate
+                                size={28}
+                                style={{
+                                    marginBottom:
+                                        "8px",
+                                }}
+                            />
+
+                            <div>
+                                No student has scanned
+                                this attendance QR yet.
+                            </div>
+                        </div>
+                    )}
+
+                    {/* =================================================
+                        ATTENDANCE TABLE
+                    ================================================= */}
+
+                    {attendanceRecords.length >
+                    0 ? (
+                        <div
+                            style={{
+                                overflowX:
+                                    "auto",
+                                border:
+                                    "1px solid #eaecf0",
+                                borderRadius:
+                                    "12px",
+                            }}
+                        >
+                            <table
+                                style={{
+                                    width:
+                                        "100%",
+                                    borderCollapse:
+                                        "collapse",
+                                    minWidth:
+                                        "800px",
+                                }}
+                            >
+                                <thead>
+                                    <tr
+                                        style={{
+                                            background:
+                                                "#f8fafc",
+                                        }}
+                                    >
+                                        <th
+                                            style={{
+                                                padding:
+                                                    "12px",
+                                                textAlign:
+                                                    "left",
+                                                fontSize:
+                                                    "13px",
+                                                color:
+                                                    "#667085",
+                                            }}
+                                        >
+                                            #
+                                        </th>
+
+                                        <th
+                                            style={{
+                                                padding:
+                                                    "12px",
+                                                textAlign:
+                                                    "left",
+                                                fontSize:
+                                                    "13px",
+                                                color:
+                                                    "#667085",
+                                            }}
+                                        >
+                                            Student
+                                        </th>
+
+                                        <th
+                                            style={{
+                                                padding:
+                                                    "12px",
+                                                textAlign:
+                                                    "left",
+                                                fontSize:
+                                                    "13px",
+                                                color:
+                                                    "#667085",
+                                            }}
+                                        >
+                                            Register No.
+                                        </th>
+
+                                        <th
+                                            style={{
+                                                padding:
+                                                    "12px",
+                                                textAlign:
+                                                    "left",
+                                                fontSize:
+                                                    "13px",
+                                                color:
+                                                    "#667085",
+                                            }}
+                                        >
+                                            Department
+                                        </th>
+
+                                        <th
+                                            style={{
+                                                padding:
+                                                    "12px",
+                                                textAlign:
+                                                    "left",
+                                                fontSize:
+                                                    "13px",
+                                                color:
+                                                    "#667085",
+                                            }}
+                                        >
+                                            Status
+                                        </th>
+
+                                        <th
+                                            style={{
+                                                padding:
+                                                    "12px",
+                                                textAlign:
+                                                    "left",
+                                                fontSize:
+                                                    "13px",
+                                                color:
+                                                    "#667085",
+                                            }}
+                                        >
+                                            Scan Time
+                                        </th>
+                                    </tr>
+                                </thead>
+
+                                <tbody>
+                                    {attendanceRecords.map(
+                                        (
+                                            record,
+                                            index
+                                        ) => {
+                                            const status =
+                                                getAttendanceStatus(
+                                                    record
+                                                );
+
+                                            return (
+                                                <tr
+                                                    key={
+                                                        getAttendanceId(
+                                                            record
+                                                        ) ??
+                                                        `${index}-${getRegisterNumber(
+                                                            record
+                                                        )}`
+                                                    }
+                                                    style={{
+                                                        borderTop:
+                                                            "1px solid #eaecf0",
+                                                        background:
+                                                            index ===
+                                                            0
+                                                                ? "#f6fef9"
+                                                                : "#ffffff",
+                                                    }}
+                                                >
+                                                    <td
+                                                        style={{
+                                                            padding:
+                                                                "12px",
+                                                            fontWeight:
+                                                                600,
+                                                        }}
+                                                    >
+                                                        {index +
+                                                            1}
+                                                    </td>
+
+                                                    <td
+                                                        style={{
+                                                            padding:
+                                                                "12px",
+                                                            fontWeight:
+                                                                600,
+                                                        }}
+                                                    >
+                                                        {getStudentName(
+                                                            record
+                                                        )}
+                                                    </td>
+
+                                                    <td
+                                                        style={{
+                                                            padding:
+                                                                "12px",
+                                                        }}
+                                                    >
+                                                        {getRegisterNumber(
+                                                            record
+                                                        )}
+                                                    </td>
+
+                                                    <td
+                                                        style={{
+                                                            padding:
+                                                                "12px",
+                                                        }}
+                                                    >
+                                                        {getStudentDepartment(
+                                                            record
+                                                        )}
+                                                    </td>
+
+                                                    <td
+                                                        style={{
+                                                            padding:
+                                                                "12px",
+                                                        }}
+                                                    >
+                                                        <span
+                                                            style={{
+                                                                display:
+                                                                    "inline-block",
+                                                                padding:
+                                                                    "5px 10px",
+                                                                borderRadius:
+                                                                    "999px",
+                                                                fontSize:
+                                                                    "12px",
+                                                                fontWeight:
+                                                                    700,
+                                                                background:
+                                                                    status ===
+                                                                    "LATE"
+                                                                        ? "#fffaeb"
+                                                                        : status ===
+                                                                          "ABSENT"
+                                                                        ? "#fef3f2"
+                                                                        : "#ecfdf3",
+                                                                color:
+                                                                    status ===
+                                                                    "LATE"
+                                                                        ? "#b54708"
+                                                                        : status ===
+                                                                          "ABSENT"
+                                                                        ? "#b42318"
+                                                                        : "#067647",
+                                                            }}
+                                                        >
+                                                            {status ||
+                                                                "PRESENT"}
+                                                        </span>
+                                                    </td>
+
+                                                    <td
+                                                        style={{
+                                                            padding:
+                                                                "12px",
+                                                        }}
+                                                    >
+                                                        {formatDateTime(
+                                                            getAttendanceTimestamp(
+                                                                record
+                                                            )
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        }
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    ) : (
+                        <div
+                            style={{
+                                textAlign:
+                                    "center",
+                                padding:
+                                    "20px",
+                                color:
+                                    "#98a2b3",
+                            }}
+                        >
+                            No attendance records
+                            available.
+                        </div>
+                    )}
+
+                    {lastAttendanceTime && (
+                        <div
+                            style={{
+                                marginTop:
+                                    "12px",
+                                fontSize:
+                                    "12px",
+                                color:
+                                    "#98a2b3",
+                                textAlign:
+                                    "right",
+                            }}
+                        >
+                            Last attendance update:{" "}
+                            {formatDateTime(
+                                lastAttendanceTime
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                {/* =================================================
+                    SESSION INFORMATION
                 ================================================= */}
 
                 <div
@@ -2857,7 +4195,8 @@ const StaffDashboard = () => {
                                 "flex",
                             alignItems:
                                 "center",
-                            gap: "10px",
+                            gap:
+                                "10px",
                             marginBottom:
                                 "14px",
                         }}
@@ -2871,7 +4210,8 @@ const StaffDashboard = () => {
 
                         <h3
                             style={{
-                                margin: 0,
+                                margin:
+                                    0,
                             }}
                         >
                             Session Information
@@ -2884,7 +4224,8 @@ const StaffDashboard = () => {
                                 "grid",
                             gridTemplateColumns:
                                 "repeat(auto-fit, minmax(220px, 1fr))",
-                            gap: "15px",
+                            gap:
+                                "15px",
                         }}
                     >
                         <div>
@@ -2982,6 +4323,52 @@ const StaffDashboard = () => {
                                 }}
                             >
                                 15 seconds
+                            </div>
+                        </div>
+
+                        <div>
+                            <small
+                                style={{
+                                    color:
+                                        "#667085",
+                                }}
+                            >
+                                Live Attendance
+                            </small>
+
+                            <div
+                                style={{
+                                    fontWeight:
+                                        600,
+                                    marginTop:
+                                        "4px",
+                                }}
+                            >
+                                Every 1 second
+                            </div>
+                        </div>
+
+                        <div>
+                            <small
+                                style={{
+                                    color:
+                                        "#667085",
+                                }}
+                            >
+                                Records Loaded
+                            </small>
+
+                            <div
+                                style={{
+                                    fontWeight:
+                                        600,
+                                    marginTop:
+                                        "4px",
+                                }}
+                            >
+                                {
+                                    attendanceRecords.length
+                                }
                             </div>
                         </div>
                     </div>
