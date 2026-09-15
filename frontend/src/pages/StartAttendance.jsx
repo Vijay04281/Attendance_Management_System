@@ -25,14 +25,18 @@ import {
 const API_URL =
     "https://attendance-management-system-gpci.onrender.com/api";
 
+// =====================================================
+// QR CONFIGURATION
+// =====================================================
+
+// Every QR is displayed for 15 seconds.
 const QR_EXPIRY_SECONDS = 15;
 
-// Poll every 1 second so the teacher screen notices
-// a QR rotation caused by a successful student scan.
+// Check backend every 1 second to detect when a student
+// has scanned and backend has generated a new QR.
 const QR_POLL_INTERVAL = 1000;
 
-// Small delay after expiry before asking backend for
-// the next QR.
+// Small delay after backend expiry.
 const QR_EXPIRY_REFRESH_DELAY = 250;
 
 
@@ -46,50 +50,90 @@ export default function StartAttendance() {
     // =================================================
 
     const [subjects, setSubjects] = useState([]);
-    const [selectedAllocation, setSelectedAllocation] = useState("");
+
+    const [selectedAllocation, setSelectedAllocation] =
+        useState("");
 
     const [session, setSession] = useState(null);
 
     const [qrImage, setQrImage] = useState("");
+
     const [qrToken, setQrToken] = useState("");
 
-    const [timeLeft, setTimeLeft] = useState(QR_EXPIRY_SECONDS);
+    const [timeLeft, setTimeLeft] =
+        useState(QR_EXPIRY_SECONDS);
 
-    const [loadingSubjects, setLoadingSubjects] = useState(true);
-    const [starting, setStarting] = useState(false);
-    const [refreshingQR, setRefreshingQR] = useState(false);
-    const [closing, setClosing] = useState(false);
+    const [loadingSubjects, setLoadingSubjects] =
+        useState(true);
 
-    const [message, setMessage] = useState("");
-    const [error, setError] = useState("");
+    const [starting, setStarting] =
+        useState(false);
+
+    const [refreshingQR, setRefreshingQR] =
+        useState(false);
+
+    const [closing, setClosing] =
+        useState(false);
+
+    const [message, setMessage] =
+        useState("");
+
+    const [error, setError] =
+        useState("");
+
 
     // =================================================
     // REFS
     // =================================================
 
-    const refreshInProgress = useRef(false);
+    const mountedRef =
+        useRef(true);
 
-    const initialLoadStarted = useRef(false);
+    const initialLoadStarted =
+        useRef(false);
 
-    const mountedRef = useRef(true);
+    const refreshInProgress =
+        useRef(false);
 
-    const sessionRef = useRef(null);
+    const startingRef =
+        useRef(false);
 
-    const qrExpiryRef = useRef(null);
+    const closingRef =
+        useRef(false);
 
-    const qrTokenRef = useRef("");
+    const sessionRef =
+        useRef(null);
 
-    const qrRefreshTimerRef = useRef(null);
+    // Current backend QR token.
+    const qrTokenRef =
+        useRef("");
 
-    const qrPollingTimerRef = useRef(null);
+    // Backend expiry.
+    const qrExpiryRef =
+        useRef(null);
 
-    const countdownTimerRef = useRef(null);
+    // LOCAL DISPLAY expiry.
+    //
+    // This guarantees the visible countdown is:
+    //
+    // 15 → 14 → 13 → ... → 1
+    //
+    // whenever a new QR is received.
+    const localQRExpiryRef =
+        useRef(null);
 
-    const startingRef = useRef(false);
+    const qrRefreshTimerRef =
+        useRef(null);
 
-    const closingRef = useRef(false);
+    const qrPollingTimerRef =
+        useRef(null);
 
-    const refreshQRRef = useRef(null);
+    const countdownTimerRef =
+        useRef(null);
+
+    const refreshQRRef =
+        useRef(null);
+
 
     // =================================================
     // AUTH TOKEN
@@ -104,47 +148,71 @@ export default function StartAttendance() {
         );
     };
 
+
     // =================================================
-    // CLEANUP
+    // TIMER CLEANUP
     // =================================================
 
-    const clearQRRefreshTimer = useCallback(() => {
-        if (qrRefreshTimerRef.current) {
-            clearTimeout(qrRefreshTimerRef.current);
-            qrRefreshTimerRef.current = null;
-        }
-    }, []);
+    const clearQRRefreshTimer =
+        useCallback(() => {
+            if (qrRefreshTimerRef.current) {
+                clearTimeout(
+                    qrRefreshTimerRef.current
+                );
 
-    const clearQRPolling = useCallback(() => {
-        if (qrPollingTimerRef.current) {
-            clearInterval(qrPollingTimerRef.current);
-            qrPollingTimerRef.current = null;
-        }
-    }, []);
+                qrRefreshTimerRef.current =
+                    null;
+            }
+        }, []);
 
-    const clearCountdownTimer = useCallback(() => {
-        if (countdownTimerRef.current) {
-            clearInterval(countdownTimerRef.current);
-            countdownTimerRef.current = null;
-        }
-    }, []);
 
-    const clearAllQRTimers = useCallback(() => {
-        clearQRRefreshTimer();
-        clearQRPolling();
-        clearCountdownTimer();
-    }, [
-        clearQRRefreshTimer,
-        clearQRPolling,
-        clearCountdownTimer,
-    ]);
+    const clearQRPolling =
+        useCallback(() => {
+            if (qrPollingTimerRef.current) {
+                clearInterval(
+                    qrPollingTimerRef.current
+                );
+
+                qrPollingTimerRef.current =
+                    null;
+            }
+        }, []);
+
+
+    const clearCountdownTimer =
+        useCallback(() => {
+            if (countdownTimerRef.current) {
+                clearInterval(
+                    countdownTimerRef.current
+                );
+
+                countdownTimerRef.current =
+                    null;
+            }
+        }, []);
+
+
+    const clearAllQRTimers =
+        useCallback(() => {
+            clearQRRefreshTimer();
+            clearQRPolling();
+            clearCountdownTimer();
+        }, [
+            clearQRRefreshTimer,
+            clearQRPolling,
+            clearCountdownTimer,
+        ]);
+
 
     // =================================================
     // RESPONSE PARSER
     // =================================================
 
-    const getResponseData = async (response) => {
-        const text = await response.text();
+    const getResponseData = async (
+        response
+    ) => {
+        const text =
+            await response.text();
 
         if (!text) {
             return {};
@@ -152,7 +220,7 @@ export default function StartAttendance() {
 
         try {
             return JSON.parse(text);
-        } catch (parseError) {
+        } catch (error) {
             throw new Error(
                 text ||
                     `Server returned invalid response (${response.status})`
@@ -160,11 +228,15 @@ export default function StartAttendance() {
         }
     };
 
+
     // =================================================
-    // GENERIC ERROR EXTRACTION
+    // ERROR MESSAGE
     // =================================================
 
-    const getErrorMessage = (data, fallback) => {
+    const getErrorMessage = (
+        data,
+        fallback
+    ) => {
         if (!data) {
             return fallback;
         }
@@ -184,11 +256,14 @@ export default function StartAttendance() {
         );
     };
 
+
     // =================================================
     // EXTRACT SESSION
     // =================================================
 
-    const extractSession = (data) => {
+    const extractSession = (
+        data
+    ) => {
         if (!data) {
             return null;
         }
@@ -205,22 +280,28 @@ export default function StartAttendance() {
             data.session_id ||
             data.data?.session_id
         ) {
-            return data.data || data;
+            return (
+                data.data ||
+                data
+            );
         }
 
         return null;
     };
 
+
     // =================================================
     // EXTRACT QR IMAGE
     // =================================================
 
-    const extractQRImage = (data) => {
+    const extractQRImage = (
+        data
+    ) => {
         if (!data) {
             return "";
         }
 
-        const directValues = [
+        const values = [
             data.qr_image,
             data.qr_code,
             data.qrImage,
@@ -229,7 +310,7 @@ export default function StartAttendance() {
             data.qr_data,
         ];
 
-        for (const value of directValues) {
+        for (const value of values) {
             if (
                 typeof value === "string" &&
                 value.trim()
@@ -239,7 +320,10 @@ export default function StartAttendance() {
         }
 
         if (data.data) {
-            const nested = extractQRImage(data.data);
+            const nested =
+                extractQRImage(
+                    data.data
+                );
 
             if (nested) {
                 return nested;
@@ -247,7 +331,10 @@ export default function StartAttendance() {
         }
 
         if (data.session) {
-            const nested = extractQRImage(data.session);
+            const nested =
+                extractQRImage(
+                    data.session
+                );
 
             if (nested) {
                 return nested;
@@ -257,23 +344,26 @@ export default function StartAttendance() {
         return "";
     };
 
+
     // =================================================
     // EXTRACT QR TOKEN
     // =================================================
 
-    const extractQRToken = (data) => {
+    const extractQRToken = (
+        data
+    ) => {
         if (!data) {
             return "";
         }
 
-        const directValues = [
+        const values = [
             data.qr_token,
             data.qrToken,
             data.token,
             data.qr_token_value,
         ];
 
-        for (const value of directValues) {
+        for (const value of values) {
             if (
                 typeof value === "string" &&
                 value.trim()
@@ -283,7 +373,10 @@ export default function StartAttendance() {
         }
 
         if (data.data) {
-            const nested = extractQRToken(data.data);
+            const nested =
+                extractQRToken(
+                    data.data
+                );
 
             if (nested) {
                 return nested;
@@ -291,46 +384,48 @@ export default function StartAttendance() {
         }
 
         if (data.session) {
-            const nested = extractQRToken(data.session);
+            const nested =
+                extractQRToken(
+                    data.session
+                );
 
             if (nested) {
                 return nested;
             }
         }
 
-        if (
-            sessionRef.current &&
-            typeof sessionRef.current.qr_token === "string"
-        ) {
-            return sessionRef.current.qr_token;
-        }
-
         return "";
     };
+
 
     // =================================================
     // EXTRACT QR EXPIRY
     // =================================================
 
-    const extractQRExpiry = (data) => {
+    const extractQRExpiry = (
+        data
+    ) => {
         if (!data) {
             return null;
         }
 
-        const directValues = [
+        const values = [
             data.qr_expires_at,
             data.expires_at,
             data.qrExpiresAt,
         ];
 
-        for (const value of directValues) {
+        for (const value of values) {
             if (value) {
                 return value;
             }
         }
 
         if (data.data) {
-            const nested = extractQRExpiry(data.data);
+            const nested =
+                extractQRExpiry(
+                    data.data
+                );
 
             if (nested) {
                 return nested;
@@ -338,7 +433,10 @@ export default function StartAttendance() {
         }
 
         if (data.session) {
-            const nested = extractQRExpiry(data.session);
+            const nested =
+                extractQRExpiry(
+                    data.session
+                );
 
             if (nested) {
                 return nested;
@@ -348,16 +446,14 @@ export default function StartAttendance() {
         return null;
     };
 
+
     // =================================================
-    // PARSE MYSQL DATE/TIME
-    //
-    // MySQL DATETIME is returned as:
-    // YYYY-MM-DD HH:mm:ss
-    //
-    // We intentionally parse it as local browser time.
+    // DATE PARSER
     // =================================================
 
-    const parseDateTime = (value) => {
+    const parseDateTime = (
+        value
+    ) => {
         if (!value) {
             return null;
         }
@@ -366,21 +462,29 @@ export default function StartAttendance() {
             return value;
         }
 
-        if (typeof value !== "string") {
+        if (
+            typeof value !==
+            "string"
+        ) {
             return null;
         }
 
-        const trimmed = value.trim();
+        const trimmed =
+            value.trim();
 
         if (!trimmed) {
             return null;
         }
 
-        // MySQL:
-        // 2026-09-15 18:30:45
-        const mysqlMatch = trimmed.match(
-            /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/
-        );
+        // MySQL DATETIME:
+        //
+        // 2026-09-15 16:02:30
+        //
+
+        const mysqlMatch =
+            trimmed.match(
+                /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/
+            );
 
         if (mysqlMatch) {
             const [
@@ -404,651 +508,915 @@ export default function StartAttendance() {
             );
         }
 
-        const parsed = new Date(trimmed);
+        const parsed =
+            new Date(trimmed);
 
-        if (Number.isNaN(parsed.getTime())) {
+        if (
+            Number.isNaN(
+                parsed.getTime()
+            )
+        ) {
             return null;
         }
 
         return parsed;
     };
 
-    // =================================================
-    // CALCULATE TIME LEFT
-    // =================================================
-
-    const calculateTimeLeft = (expiresAt) => {
-        const expiryDate = parseDateTime(expiresAt);
-
-        if (!expiryDate) {
-            return QR_EXPIRY_SECONDS;
-        }
-
-        const remainingMilliseconds =
-            expiryDate.getTime() - Date.now();
-
-        const remainingSeconds = Math.ceil(
-            remainingMilliseconds / 1000
-        );
-
-        return Math.max(
-            0,
-            Math.min(
-                QR_EXPIRY_SECONDS,
-                remainingSeconds
-            )
-        );
-    };
 
     // =================================================
     // START COUNTDOWN
-    // =================================================
-
-    const startCountdown = useCallback(
-        (expiresAt) => {
-            clearCountdownTimer();
-
-            if (!expiresAt) {
-                setTimeLeft(QR_EXPIRY_SECONDS);
-                return;
-            }
-
-            qrExpiryRef.current = expiresAt;
-
-            const updateCountdown = () => {
-                if (!mountedRef.current) {
-                    return;
-                }
-
-                const remaining =
-                    calculateTimeLeft(expiresAt);
-
-                setTimeLeft(remaining);
-
-                if (remaining <= 0) {
-                    clearCountdownTimer();
-                }
-            };
-
-            updateCountdown();
-
-            countdownTimerRef.current =
-                setInterval(updateCountdown, 250);
-        },
-        [clearCountdownTimer]
-    );
-
-    // =================================================
-    // SCHEDULE EXPIRY REFRESH
-    // =================================================
-
-    const scheduleQRRefresh = useCallback(
-        (expiresAt, sessionId) => {
-            clearQRRefreshTimer();
-
-            if (!expiresAt || !sessionId) {
-                return;
-            }
-
-            const expiryDate =
-                parseDateTime(expiresAt);
-
-            if (!expiryDate) {
-                return;
-            }
-
-            const delay = Math.max(
-                0,
-                expiryDate.getTime() -
-                    Date.now() +
-                    QR_EXPIRY_REFRESH_DELAY
-            );
-
-            qrRefreshTimerRef.current =
-                setTimeout(() => {
-                    if (!mountedRef.current) {
-                        return;
-                    }
-
-                    if (
-                        sessionRef.current?.session_id !==
-                        sessionId
-                    ) {
-                        return;
-                    }
-
-                    if (
-                        refreshQRRef.current
-                    ) {
-                        refreshQRRef.current(
-                            sessionId,
-                            {
-                                force: false,
-                                silent: true,
-                            }
-                        );
-                    }
-                }, delay);
-        },
-        [clearQRRefreshTimer]
-    );
-
-    // =================================================
-    // START QR POLLING
     //
-    // This is what detects a QR rotation caused by
-    // a student successfully scanning the QR.
+    // IMPORTANT:
     //
-    // Example:
+    // The countdown is based on the LOCAL QR creation
+    // time for display.
     //
-    // Teacher has QR #1
-    //       ↓
-    // Student scans QR #1
-    //       ↓
-    // Backend inserts attendance
-    //       ↓
-    // Backend changes qr_token
-    //       ↓
-    // Teacher polling detects changed qr_token
-    //       ↓
-    // Teacher immediately displays QR #2
+    // This guarantees:
+    //
+    // 15
+    // 14
+    // 13
+    // ...
+    // 2
+    // 1
+    // new QR
+    // 15
+    //
+    // The BACKEND remains authoritative for whether
+    // the QR is actually valid.
     // =================================================
 
-    const startQRPolling = useCallback(
-        (sessionId) => {
-            clearQRPolling();
-
-            if (!sessionId) {
-                return;
-            }
-
-            qrPollingTimerRef.current =
-                setInterval(() => {
-                    if (!mountedRef.current) {
-                        return;
-                    }
-
-                    if (
-                        !sessionRef.current ||
-                        sessionRef.current.session_id !==
-                            sessionId
-                    ) {
-                        return;
-                    }
-
-                    if (
-                        sessionRef.current.status &&
-                        String(
-                            sessionRef.current.status
-                        ).toUpperCase() !== "ACTIVE"
-                    ) {
-                        return;
-                    }
-
-                    if (
-                        refreshQRRef.current
-                    ) {
-                        refreshQRRef.current(
-                            sessionId,
-                            {
-                                force: false,
-                                silent: true,
-                            }
-                        );
-                    }
-                }, QR_POLL_INTERVAL);
-        },
-        [clearQRPolling]
-    );
-
-    // =================================================
-    // REFRESH QR
-    //
-    // force=true:
-    //     Ask backend to rotate QR immediately.
-    //
-    // force=false:
-    //     Backend returns current QR if still valid,
-    //     or automatically rotates it if expired.
-    //
-    // silent=true:
-    //     Used by background polling.
-    //     It does not show loading UI.
-    // =================================================
-
-    const refreshQR = useCallback(
-        async (
-            sessionId,
-            {
-                force = false,
-                silent = false,
-            } = {}
-        ) => {
-            if (!sessionId) {
-                return;
-            }
-
-            if (refreshInProgress.current) {
-                return;
-            }
-
-            refreshInProgress.current = true;
-
-            if (!silent && mountedRef.current) {
-                setRefreshingQR(true);
-            }
-
-            try {
-                const token = getAuthToken();
-
-                if (!token) {
-                    throw new Error(
-                        "Authentication token not found. Please login again."
-                    );
-                }
-
-                const endpoint =
-                    `${API_URL}/attendance-sessions/${sessionId}/qr` +
-                    (force ? "?force=true" : "");
-
-                const response = await fetch(
-                    endpoint,
-                    {
-                        method: "GET",
-                        headers: {
-                            Authorization: `Bearer ${token}`,
-                            "Content-Type":
-                                "application/json",
-                        },
-                    }
-                );
-
-                const data =
-                    await getResponseData(response);
-
-                if (!response.ok) {
-                    throw new Error(
-                        getErrorMessage(
-                            data,
-                            `Failed to refresh QR (${response.status})`
-                        )
-                    );
-                }
-
-                if (!mountedRef.current) {
-                    return;
-                }
-
-                const returnedSession =
-                    extractSession(data);
-
-                const returnedQRImage =
-                    extractQRImage(data);
-
-                const returnedQRToken =
-                    extractQRToken(data);
-
-                const returnedQRExpiry =
-                    extractQRExpiry(data);
+    const startCountdown =
+        useCallback(
+            (
+                expiresAt,
+                resetTo15 = false
+            ) => {
+                clearCountdownTimer();
 
                 // -----------------------------------------
-                // SESSION UPDATE
+                // If this is a NEW QR, start a fresh
+                // 15-second local countdown.
                 // -----------------------------------------
 
-                if (returnedSession) {
-                    setSession((previous) => ({
-                        ...(previous || {}),
-                        ...returnedSession,
-                    }));
+                if (resetTo15) {
+                    localQRExpiryRef.current =
+                        Date.now() +
+                        QR_EXPIRY_SECONDS *
+                            1000;
+                } else {
+                    const parsed =
+                        parseDateTime(
+                            expiresAt
+                        );
 
-                    sessionRef.current = {
-                        ...(sessionRef.current || {}),
-                        ...returnedSession,
+                    if (parsed) {
+                        localQRExpiryRef.current =
+                            parsed.getTime();
+                    } else {
+                        localQRExpiryRef.current =
+                            Date.now() +
+                            QR_EXPIRY_SECONDS *
+                                1000;
+                    }
+                }
+
+                const updateCountdown =
+                    () => {
+                        if (
+                            !mountedRef.current
+                        ) {
+                            return;
+                        }
+
+                        if (
+                            !localQRExpiryRef.current
+                        ) {
+                            setTimeLeft(
+                                QR_EXPIRY_SECONDS
+                            );
+
+                            return;
+                        }
+
+                        const remaining =
+                            Math.ceil(
+                                (
+                                    localQRExpiryRef
+                                        .current -
+                                    Date.now()
+                                ) /
+                                    1000
+                            );
+
+                        const safeRemaining =
+                            Math.max(
+                                0,
+                                Math.min(
+                                    QR_EXPIRY_SECONDS,
+                                    remaining
+                                )
+                            );
+
+                        setTimeLeft(
+                            safeRemaining
+                        );
+
+                        if (
+                            safeRemaining <=
+                            0
+                        ) {
+                            clearCountdownTimer();
+                        }
                     };
-                }
 
-                // -----------------------------------------
-                // CHECK WHETHER QR CHANGED
-                // -----------------------------------------
+                updateCountdown();
 
-                const previousToken =
-                    qrTokenRef.current;
-
-                const tokenChanged =
-                    Boolean(
-                        returnedQRToken &&
-                        previousToken &&
-                        returnedQRToken !== previousToken
+                countdownTimerRef.current =
+                    setInterval(
+                        updateCountdown,
+                        250
                     );
+            },
+            [
+                clearCountdownTimer,
+            ]
+        );
 
-                const firstQR =
-                    !previousToken &&
-                    Boolean(returnedQRToken);
-
-                // -----------------------------------------
-                // UPDATE TOKEN
-                // -----------------------------------------
-
-                if (returnedQRToken) {
-                    qrTokenRef.current =
-                        returnedQRToken;
-
-                    setQrToken(returnedQRToken);
-                }
-
-                // -----------------------------------------
-                // UPDATE IMAGE
-                //
-                // Only replace the image when:
-                //
-                // 1. This is the first QR
-                // 2. Backend returned a different token
-                // 3. Force refresh was requested
-                // 4. We don't currently have an image
-                // -----------------------------------------
-
-                if (
-                    returnedQRImage &&
-                    (
-                        firstQR ||
-                        tokenChanged ||
-                        force ||
-                        !qrImage
-                    )
-                ) {
-                    setQrImage(returnedQRImage);
-                }
-
-                // -----------------------------------------
-                // UPDATE EXPIRY
-                // -----------------------------------------
-
-                if (returnedQRExpiry) {
-                    qrExpiryRef.current =
-                        returnedQRExpiry;
-
-                    startCountdown(
-                        returnedQRExpiry
-                    );
-
-                    scheduleQRRefresh(
-                        returnedQRExpiry,
-                        sessionId
-                    );
-                }
-
-                // -----------------------------------------
-                // IF TOKEN CHANGED
-                // -----------------------------------------
-
-                if (tokenChanged) {
-                    setMessage(
-                        "Attendance recorded. New QR generated automatically."
-                    );
-
-                    setError("");
-                }
-
-                // -----------------------------------------
-                // IF FORCE REFRESH
-                // -----------------------------------------
-
-                if (force) {
-                    setMessage(
-                        "New QR code generated successfully."
-                    );
-
-                    setError("");
-                }
-            } catch (err) {
-                console.error(
-                    "QR refresh error:",
-                    err
-                );
-
-                // Background polling should not repeatedly
-                // show errors to the teacher.
-                if (
-                    !silent &&
-                    mountedRef.current
-                ) {
-                    setError(
-                        err.message ||
-                            "Unable to refresh QR code."
-                    );
-                }
-            } finally {
-                refreshInProgress.current = false;
-
-                if (
-                    !silent &&
-                    mountedRef.current
-                ) {
-                    setRefreshingQR(false);
-                }
-            }
-        },
-        [
-            scheduleQRRefresh,
-            startCountdown,
-            qrImage,
-        ]
-    );
-
-    // Keep a stable ref to the latest refreshQR function.
-    useEffect(() => {
-        refreshQRRef.current =
-            refreshQR;
-    }, [refreshQR]);
 
     // =================================================
-    // FETCH STAFF SUBJECTS
+    // SCHEDULE BACKEND EXPIRY CHECK
     // =================================================
 
-    const fetchSubjects = useCallback(
-        async () => {
-            if (!mountedRef.current) {
-                return;
-            }
+    const scheduleQRRefresh =
+        useCallback(
+            (
+                expiresAt,
+                sessionId
+            ) => {
+                clearQRRefreshTimer();
 
-            setLoadingSubjects(true);
-            setError("");
-
-            try {
-                const token = getAuthToken();
-
-                if (!token) {
-                    throw new Error(
-                        "Authentication token not found. Please login again."
-                    );
+                if (
+                    !expiresAt ||
+                    !sessionId
+                ) {
+                    return;
                 }
 
-                const response = await fetch(
-                    `${API_URL}/attendance-sessions/staff-subjects`,
-                    {
-                        method: "GET",
-                        headers: {
-                            Authorization: `Bearer ${token}`,
-                            "Content-Type":
-                                "application/json",
+                const expiryDate =
+                    parseDateTime(
+                        expiresAt
+                    );
+
+                if (!expiryDate) {
+                    return;
+                }
+
+                const delay =
+                    Math.max(
+                        0,
+                        expiryDate.getTime() -
+                            Date.now() +
+                            QR_EXPIRY_REFRESH_DELAY
+                    );
+
+                qrRefreshTimerRef.current =
+                    setTimeout(
+                        () => {
+                            if (
+                                !mountedRef.current
+                            ) {
+                                return;
+                            }
+
+                            if (
+                                sessionRef
+                                    .current
+                                    ?.session_id !==
+                                sessionId
+                            ) {
+                                return;
+                            }
+
+                            if (
+                                refreshQRRef.current
+                            ) {
+                                refreshQRRef.current(
+                                    sessionId,
+                                    {
+                                        force: false,
+                                        silent: true,
+                                    }
+                                );
+                            }
                         },
-                    }
-                );
-
-                const data =
-                    await getResponseData(response);
-
-                if (!response.ok) {
-                    throw new Error(
-                        getErrorMessage(
-                            data,
-                            `Failed to load subjects (${response.status})`
-                        )
+                        delay
                     );
-                }
+            },
+            [
+                clearQRRefreshTimer,
+            ]
+        );
 
-                if (!mountedRef.current) {
-                    return;
-                }
-
-                let subjectList = [];
-
-                if (Array.isArray(data)) {
-                    subjectList = data;
-                } else if (
-                    Array.isArray(data.data)
-                ) {
-                    subjectList = data.data;
-                } else if (
-                    Array.isArray(data.subjects)
-                ) {
-                    subjectList = data.subjects;
-                } else if (
-                    Array.isArray(data.allocations)
-                ) {
-                    subjectList = data.allocations;
-                } else if (
-                    Array.isArray(
-                        data.data?.subjects
-                    )
-                ) {
-                    subjectList =
-                        data.data.subjects;
-                } else if (
-                    Array.isArray(
-                        data.data?.allocations
-                    )
-                ) {
-                    subjectList =
-                        data.data.allocations;
-                }
-
-                setSubjects(subjectList);
-
-                if (
-                    subjectList.length === 0
-                ) {
-                    setMessage(
-                        "No subject/class allocation found."
-                    );
-                }
-            } catch (err) {
-                console.error(
-                    "Fetch subjects error:",
-                    err
-                );
-
-                if (mountedRef.current) {
-                    setError(
-                        err.message ||
-                            "Unable to load subjects."
-                    );
-                }
-            } finally {
-                if (mountedRef.current) {
-                    setLoadingSubjects(false);
-                }
-            }
-        },
-        []
-    );
 
     // =================================================
-    // FETCH ACTIVE SESSION
+    // QR POLLING
+    //
+    // Every second the teacher page asks the backend
+    // for the current QR.
+    //
+    // If student scanned QR #1:
+    //
+    // Backend:
+    //
+    // QR #1 → invalid
+    // QR #2 → generated
+    //
+    // Polling detects token change.
     // =================================================
 
-    const fetchActiveSession = useCallback(
-        async () => {
-            try {
-                const token = getAuthToken();
-
-                if (!token) {
-                    return;
-                }
-
-                const response = await fetch(
-                    `${API_URL}/attendance-sessions/active`,
-                    {
-                        method: "GET",
-                        headers: {
-                            Authorization: `Bearer ${token}`,
-                            "Content-Type":
-                                "application/json",
-                        },
-                    }
-                );
-
-                const data =
-                    await getResponseData(response);
-
-                if (!response.ok) {
-                    // 404/204 can mean there is no active
-                    // session. Do not treat that as a
-                    // fatal application error.
-                    if (
-                        response.status === 404 ||
-                        response.status === 204
-                    ) {
-                        return;
-                    }
-
-                    throw new Error(
-                        getErrorMessage(
-                            data,
-                            `Failed to load active session (${response.status})`
-                        )
-                    );
-                }
-
-                if (!mountedRef.current) {
-                    return;
-                }
-
-                const activeSession =
-                    extractSession(data);
-
-                if (!activeSession) {
-                    return;
-                }
-
-                setSession(activeSession);
-
-                sessionRef.current =
-                    activeSession;
-
-                const sessionId =
-                    activeSession.session_id;
+    const startQRPolling =
+        useCallback(
+            (sessionId) => {
+                clearQRPolling();
 
                 if (!sessionId) {
                     return;
                 }
 
-                await refreshQR(
-                    sessionId,
-                    {
-                        force: false,
-                        silent: false,
+                qrPollingTimerRef.current =
+                    setInterval(
+                        () => {
+                            if (
+                                !mountedRef.current
+                            ) {
+                                return;
+                            }
+
+                            const currentSession =
+                                sessionRef.current;
+
+                            if (
+                                !currentSession
+                            ) {
+                                return;
+                            }
+
+                            if (
+                                currentSession.session_id !==
+                                sessionId
+                            ) {
+                                return;
+                            }
+
+                            if (
+                                currentSession.status &&
+                                String(
+                                    currentSession.status
+                                ).toUpperCase() !==
+                                    "ACTIVE"
+                            ) {
+                                return;
+                            }
+
+                            if (
+                                refreshQRRef.current
+                            ) {
+                                refreshQRRef.current(
+                                    sessionId,
+                                    {
+                                        force: false,
+                                        silent: true,
+                                    }
+                                );
+                            }
+                        },
+                        QR_POLL_INTERVAL
+                    );
+            },
+            [
+                clearQRPolling,
+            ]
+        );
+
+
+    // =================================================
+    // REFRESH QR
+    // =================================================
+
+    const refreshQR =
+        useCallback(
+            async (
+                sessionId,
+                {
+                    force = false,
+                    silent = false,
+                } = {}
+            ) => {
+                if (!sessionId) {
+                    return;
+                }
+
+                if (
+                    refreshInProgress.current
+                ) {
+                    return;
+                }
+
+                refreshInProgress.current =
+                    true;
+
+                if (
+                    !silent &&
+                    mountedRef.current
+                ) {
+                    setRefreshingQR(
+                        true
+                    );
+                }
+
+                try {
+                    const token =
+                        getAuthToken();
+
+                    if (!token) {
+                        throw new Error(
+                            "Authentication token not found. Please login again."
+                        );
                     }
-                );
 
-                startQRPolling(sessionId);
-            } catch (err) {
-                console.error(
-                    "Fetch active session error:",
-                    err
-                );
+                    const endpoint =
+                        `${API_URL}/attendance-sessions/${sessionId}/qr` +
+                        (
+                            force
+                                ? "?force=true"
+                                : ""
+                        );
 
-                if (mountedRef.current) {
-                    // Do not display an error if there
-                    // simply isn't an active session.
-                    if (
-                        !String(
-                            err.message || ""
-                        )
-                            .toLowerCase()
-                            .includes(
-                                "no active"
+                    const response =
+                        await fetch(
+                            endpoint,
+                            {
+                                method:
+                                    "GET",
+
+                                headers: {
+                                    Authorization:
+                                        `Bearer ${token}`,
+
+                                    "Content-Type":
+                                        "application/json",
+                                },
+                            }
+                        );
+
+                    const data =
+                        await getResponseData(
+                            response
+                        );
+
+                    if (!response.ok) {
+                        throw new Error(
+                            getErrorMessage(
+                                data,
+                                `Failed to refresh QR (${response.status})`
                             )
+                        );
+                    }
+
+                    if (
+                        !mountedRef.current
+                    ) {
+                        return;
+                    }
+
+                    // -----------------------------------------
+                    // EXTRACT DATA
+                    // -----------------------------------------
+
+                    const returnedSession =
+                        extractSession(
+                            data
+                        );
+
+                    const returnedQRImage =
+                        extractQRImage(
+                            data
+                        );
+
+                    const returnedQRToken =
+                        extractQRToken(
+                            data
+                        );
+
+                    const returnedQRExpiry =
+                        extractQRExpiry(
+                            data
+                        );
+
+                    // -----------------------------------------
+                    // UPDATE SESSION
+                    // -----------------------------------------
+
+                    if (
+                        returnedSession
+                    ) {
+                        const mergedSession =
+                            {
+                                ...(sessionRef.current ||
+                                    {}),
+                                ...returnedSession,
+                            };
+
+                        sessionRef.current =
+                            mergedSession;
+
+                        setSession(
+                            mergedSession
+                        );
+                    }
+
+                    // -----------------------------------------
+                    // TOKEN COMPARISON
+                    // -----------------------------------------
+
+                    const previousToken =
+                        qrTokenRef.current;
+
+                    const tokenChanged =
+                        Boolean(
+                            returnedQRToken &&
+                                previousToken &&
+                                returnedQRToken !==
+                                    previousToken
+                        );
+
+                    const firstQR =
+                        Boolean(
+                            returnedQRToken &&
+                                !previousToken
+                        );
+
+                    // -----------------------------------------
+                    // TOKEN UPDATE
+                    // -----------------------------------------
+
+                    if (
+                        returnedQRToken
+                    ) {
+                        qrTokenRef.current =
+                            returnedQRToken;
+
+                        setQrToken(
+                            returnedQRToken
+                        );
+                    }
+
+                    // -----------------------------------------
+                    // NEW QR DETECTED
+                    // -----------------------------------------
+
+                    if (
+                        returnedQRImage &&
+                        (
+                            firstQR ||
+                            tokenChanged ||
+                            force ||
+                            !qrImage
+                        )
+                    ) {
+                        setQrImage(
+                            returnedQRImage
+                        );
+                    }
+
+                    // -----------------------------------------
+                    // EXPIRY UPDATE
+                    // -----------------------------------------
+
+                    if (
+                        returnedQRExpiry
+                    ) {
+                        qrExpiryRef.current =
+                            returnedQRExpiry;
+
+                        // -------------------------------------
+                        // NEW TOKEN
+                        //
+                        // ALWAYS restart visible countdown
+                        // from 15 seconds.
+                        // -------------------------------------
+
+                        if (
+                            firstQR ||
+                            tokenChanged ||
+                            force
+                        ) {
+                            startCountdown(
+                                returnedQRExpiry,
+                                true
+                            );
+                        } else if (
+                            !localQRExpiryRef.current
+                        ) {
+                            startCountdown(
+                                returnedQRExpiry,
+                                true
+                            );
+                        }
+
+                        // -------------------------------------
+                        // Backend controls actual expiry.
+                        // -------------------------------------
+
+                        scheduleQRRefresh(
+                            returnedQRExpiry,
+                            sessionId
+                        );
+                    }
+
+                    // -----------------------------------------
+                    // IF TOKEN CHANGED BECAUSE A STUDENT
+                    // SUCCESSFULLY SCANNED
+                    // -----------------------------------------
+
+                    if (
+                        tokenChanged
+                    ) {
+                        setMessage(
+                            "Attendance recorded. New QR generated automatically."
+                        );
+
+                        setError("");
+
+                        // Ensure countdown is exactly
+                        // a fresh QR countdown.
+                        setTimeLeft(
+                            QR_EXPIRY_SECONDS
+                        );
+
+                        localQRExpiryRef.current =
+                            Date.now() +
+                            QR_EXPIRY_SECONDS *
+                                1000;
+
+                        startCountdown(
+                            returnedQRExpiry,
+                            true
+                        );
+                    }
+
+                    // -----------------------------------------
+                    // FORCE REFRESH
+                    // -----------------------------------------
+
+                    if (
+                        force &&
+                        returnedQRToken
+                    ) {
+                        setMessage(
+                            "New QR code generated successfully."
+                        );
+
+                        setError("");
+
+                        setTimeLeft(
+                            QR_EXPIRY_SECONDS
+                        );
+
+                        localQRExpiryRef.current =
+                            Date.now() +
+                            QR_EXPIRY_SECONDS *
+                                1000;
+
+                        startCountdown(
+                            returnedQRExpiry,
+                            true
+                        );
+                    }
+                } catch (err) {
+                    console.error(
+                        "QR refresh error:",
+                        err
+                    );
+
+                    // Do not show repeated errors caused
+                    // by background polling.
+                    if (
+                        !silent &&
+                        mountedRef.current
+                    ) {
+                        setError(
+                            err.message ||
+                                "Unable to refresh QR code."
+                        );
+                    }
+                } finally {
+                    refreshInProgress.current =
+                        false;
+
+                    if (
+                        !silent &&
+                        mountedRef.current
+                    ) {
+                        setRefreshingQR(
+                            false
+                        );
+                    }
+                }
+            },
+            [
+                qrImage,
+                scheduleQRRefresh,
+                startCountdown,
+            ]
+        );
+
+
+    // =================================================
+    // KEEP LATEST REFRESH FUNCTION
+    // =================================================
+
+    useEffect(() => {
+        refreshQRRef.current =
+            refreshQR;
+    }, [
+        refreshQR,
+    ]);
+
+
+    // =================================================
+    // FETCH SUBJECTS
+    // =================================================
+
+    const fetchSubjects =
+        useCallback(
+            async () => {
+                if (
+                    !mountedRef.current
+                ) {
+                    return;
+                }
+
+                setLoadingSubjects(
+                    true
+                );
+
+                setError("");
+
+                try {
+                    const token =
+                        getAuthToken();
+
+                    if (!token) {
+                        throw new Error(
+                            "Authentication token not found. Please login again."
+                        );
+                    }
+
+                    const response =
+                        await fetch(
+                            `${API_URL}/attendance-sessions/staff-subjects`,
+                            {
+                                method:
+                                    "GET",
+
+                                headers: {
+                                    Authorization:
+                                        `Bearer ${token}`,
+
+                                    "Content-Type":
+                                        "application/json",
+                                },
+                            }
+                        );
+
+                    const data =
+                        await getResponseData(
+                            response
+                        );
+
+                    if (!response.ok) {
+                        throw new Error(
+                            getErrorMessage(
+                                data,
+                                `Failed to load subjects (${response.status})`
+                            )
+                        );
+                    }
+
+                    if (
+                        !mountedRef.current
+                    ) {
+                        return;
+                    }
+
+                    let subjectList =
+                        [];
+
+                    if (
+                        Array.isArray(
+                            data
+                        )
+                    ) {
+                        subjectList =
+                            data;
+                    } else if (
+                        Array.isArray(
+                            data.data
+                        )
+                    ) {
+                        subjectList =
+                            data.data;
+                    } else if (
+                        Array.isArray(
+                            data.subjects
+                        )
+                    ) {
+                        subjectList =
+                            data.subjects;
+                    } else if (
+                        Array.isArray(
+                            data.allocations
+                        )
+                    ) {
+                        subjectList =
+                            data.allocations;
+                    } else if (
+                        Array.isArray(
+                            data.data
+                                ?.subjects
+                        )
+                    ) {
+                        subjectList =
+                            data.data.subjects;
+                    } else if (
+                        Array.isArray(
+                            data.data
+                                ?.allocations
+                        )
+                    ) {
+                        subjectList =
+                            data.data.allocations;
+                    }
+
+                    setSubjects(
+                        subjectList
+                    );
+
+                    if (
+                        subjectList.length ===
+                        0
+                    ) {
+                        setMessage(
+                            "No subject/class allocation found."
+                        );
+                    }
+                } catch (err) {
+                    console.error(
+                        "Fetch subjects error:",
+                        err
+                    );
+
+                    if (
+                        mountedRef.current
+                    ) {
+                        setError(
+                            err.message ||
+                                "Unable to load subjects."
+                        );
+                    }
+                } finally {
+                    if (
+                        mountedRef.current
+                    ) {
+                        setLoadingSubjects(
+                            false
+                        );
+                    }
+                }
+            },
+            []
+        );
+
+
+    // =================================================
+    // FETCH ACTIVE SESSION
+    // =================================================
+
+    const fetchActiveSession =
+        useCallback(
+            async () => {
+                try {
+                    const token =
+                        getAuthToken();
+
+                    if (!token) {
+                        return;
+                    }
+
+                    const response =
+                        await fetch(
+                            `${API_URL}/attendance-sessions/active`,
+                            {
+                                method:
+                                    "GET",
+
+                                headers: {
+                                    Authorization:
+                                        `Bearer ${token}`,
+
+                                    "Content-Type":
+                                        "application/json",
+                                },
+                            }
+                        );
+
+                    const data =
+                        await getResponseData(
+                            response
+                        );
+
+                    if (
+                        !response.ok
+                    ) {
+                        if (
+                            response.status ===
+                                404 ||
+                            response.status ===
+                                204
+                        ) {
+                            return;
+                        }
+
+                        throw new Error(
+                            getErrorMessage(
+                                data,
+                                `Failed to load active session (${response.status})`
+                            )
+                        );
+                    }
+
+                    if (
+                        !mountedRef.current
+                    ) {
+                        return;
+                    }
+
+                    const activeSession =
+                        extractSession(
+                            data
+                        );
+
+                    if (
+                        !activeSession
+                    ) {
+                        return;
+                    }
+
+                    const sessionId =
+                        activeSession.session_id;
+
+                    if (!sessionId) {
+                        return;
+                    }
+
+                    sessionRef.current =
+                        activeSession;
+
+                    setSession(
+                        activeSession
+                    );
+
+                    // -----------------------------------------
+                    // Get current QR
+                    // -----------------------------------------
+
+                    await refreshQR(
+                        sessionId,
+                        {
+                            force:
+                                false,
+                            silent:
+                                false,
+                        }
+                    );
+
+                    // -----------------------------------------
+                    // Start monitoring
+                    // -----------------------------------------
+
+                    startQRPolling(
+                        sessionId
+                    );
+                } catch (err) {
+                    console.error(
+                        "Fetch active session error:",
+                        err
+                    );
+
+                    if (
+                        mountedRef.current
                     ) {
                         setError(
                             err.message ||
@@ -1056,40 +1424,48 @@ export default function StartAttendance() {
                         );
                     }
                 }
-            }
-        },
-        [
-            refreshQR,
-            startQRPolling,
-        ]
-    );
+            },
+            [
+                refreshQR,
+                startQRPolling,
+            ]
+        );
+
 
     // =================================================
     // INITIAL LOAD
     // =================================================
 
     useEffect(() => {
-        mountedRef.current = true;
+        mountedRef.current =
+            true;
 
-        if (initialLoadStarted.current) {
+        if (
+            initialLoadStarted.current
+        ) {
             return;
         }
 
-        initialLoadStarted.current = true;
+        initialLoadStarted.current =
+            true;
 
-        const load = async () => {
-            await fetchSubjects();
-            await fetchActiveSession();
-        };
+        const load =
+            async () => {
+                await fetchSubjects();
+
+                await fetchActiveSession();
+            };
 
         load();
 
         return () => {
-            mountedRef.current = false;
+            mountedRef.current =
+                false;
 
             clearAllQRTimers();
 
-            refreshInProgress.current = false;
+            refreshInProgress.current =
+                false;
         };
     }, [
         fetchSubjects,
@@ -1097,453 +1473,548 @@ export default function StartAttendance() {
         clearAllQRTimers,
     ]);
 
+
     // =================================================
-    // START ATTENDANCE SESSION
+    // START ATTENDANCE
     // =================================================
 
-    const startSession = async () => {
-        if (startingRef.current) {
-            return;
-        }
-
-        if (!selectedAllocation) {
-            setError(
-                "Please select a subject/class first."
-            );
-            return;
-        }
-
-        startingRef.current = true;
-
-        setStarting(true);
-        setError("");
-        setMessage("");
-
-        try {
-            const token = getAuthToken();
-
-            if (!token) {
-                throw new Error(
-                    "Authentication token not found. Please login again."
-                );
-            }
-
-            // -----------------------------------------
-            // Find selected allocation
-            // -----------------------------------------
-
-            const selected =
-                subjects.find(
-                    (item) =>
-                        String(
-                            item.allocation_id ??
-                                item.subject_allocation_id ??
-                                item.id
-                        ) ===
-                        String(
-                            selectedAllocation
-                        )
-                );
-
-            // -----------------------------------------
-            // Build request body
-            // -----------------------------------------
-
-            const allocationId =
-                selected?.allocation_id ??
-                selected?.subject_allocation_id ??
-                selectedAllocation;
-
-            const subjectId =
-                selected?.subject_id ??
-                selected?.subject?.subject_id ??
-                null;
-
-            const body = {
-                allocation_id: Number(
-                    allocationId
-                ),
-            };
-
-            if (subjectId) {
-                body.subject_id =
-                    Number(subjectId);
-            }
-
-            console.log(
-                "Starting attendance session:",
-                body
-            );
-
-            // -----------------------------------------
-            // CREATE SESSION
-            // -----------------------------------------
-
-            const response = await fetch(
-                `${API_URL}/attendance-sessions`,
-                {
-                    method: "POST",
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        "Content-Type":
-                            "application/json",
-                    },
-                    body: JSON.stringify(body),
-                }
-            );
-
-            const data =
-                await getResponseData(response);
-
-            if (!response.ok) {
-                throw new Error(
-                    getErrorMessage(
-                        data,
-                        `Failed to start attendance (${response.status})`
-                    )
-                );
-            }
-
-            if (!mountedRef.current) {
+    const startSession =
+        async () => {
+            if (
+                startingRef.current
+            ) {
                 return;
             }
-
-            // -----------------------------------------
-            // EXTRACT CREATED SESSION
-            // -----------------------------------------
-
-            const newSession =
-                extractSession(data);
-
-            if (!newSession) {
-                throw new Error(
-                    "Attendance session was created but session data was not returned."
-                );
-            }
-
-            const sessionId =
-                newSession.session_id;
-
-            if (!sessionId) {
-                throw new Error(
-                    "Attendance session ID was not returned by the server."
-                );
-            }
-
-            // -----------------------------------------
-            // RESET OLD QR STATE
-            // -----------------------------------------
-
-            clearAllQRTimers();
-
-            qrTokenRef.current = "";
-            qrExpiryRef.current = null;
-
-            setQrToken("");
-            setQrImage("");
-            setTimeLeft(
-                QR_EXPIRY_SECONDS
-            );
-
-            // -----------------------------------------
-            // SET SESSION
-            // -----------------------------------------
-
-            setSession(newSession);
-
-            sessionRef.current =
-                newSession;
-
-            // -----------------------------------------
-            // USE QR RETURNED FROM CREATE RESPONSE
-            // -----------------------------------------
-
-            const createdQRImage =
-                extractQRImage(data);
-
-            const createdQRToken =
-                extractQRToken(data);
-
-            const createdQRExpiry =
-                extractQRExpiry(data);
-
-            if (createdQRToken) {
-                qrTokenRef.current =
-                    createdQRToken;
-
-                setQrToken(
-                    createdQRToken
-                );
-            }
-
-            if (createdQRImage) {
-                setQrImage(
-                    createdQRImage
-                );
-            }
-
-            if (createdQRExpiry) {
-                qrExpiryRef.current =
-                    createdQRExpiry;
-
-                startCountdown(
-                    createdQRExpiry
-                );
-
-                scheduleQRRefresh(
-                    createdQRExpiry,
-                    sessionId
-                );
-            }
-
-            // -----------------------------------------
-            // IF CREATE RESPONSE DID NOT CONTAIN QR,
-            // FETCH IT FROM QR ENDPOINT.
-            // -----------------------------------------
 
             if (
-                !createdQRImage ||
-                !createdQRToken ||
-                !createdQRExpiry
+                !selectedAllocation
             ) {
-                await refreshQR(
-                    sessionId,
-                    {
-                        force: false,
-                        silent: false,
-                    }
-                );
-            }
-
-            // -----------------------------------------
-            // START BACKGROUND MONITORING
-            // -----------------------------------------
-
-            startQRPolling(sessionId);
-
-            setMessage(
-                "Attendance started. QR code is now active."
-            );
-        } catch (err) {
-            console.error(
-                "Start attendance error:",
-                err
-            );
-
-            if (mountedRef.current) {
                 setError(
-                    err.message ||
-                        "Unable to start attendance."
+                    "Please select a subject/class first."
                 );
-            }
-        } finally {
-            startingRef.current = false;
 
-            if (mountedRef.current) {
-                setStarting(false);
-            }
-        }
-    };
-
-    // =================================================
-    // CLOSE ATTENDANCE SESSION
-    // =================================================
-
-    const closeSession = async () => {
-        if (
-            closingRef.current ||
-            !sessionRef.current?.session_id
-        ) {
-            return;
-        }
-
-        const confirmed =
-            window.confirm(
-                "Are you sure you want to close this attendance session?"
-            );
-
-        if (!confirmed) {
-            return;
-        }
-
-        closingRef.current = true;
-
-        setClosing(true);
-        setError("");
-        setMessage("");
-
-        try {
-            const token = getAuthToken();
-
-            if (!token) {
-                throw new Error(
-                    "Authentication token not found. Please login again."
-                );
-            }
-
-            const sessionId =
-                sessionRef.current.session_id;
-
-            const response = await fetch(
-                `${API_URL}/attendance-sessions/${sessionId}/close`,
-                {
-                    method: "PATCH",
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
-
-            const data =
-                await getResponseData(response);
-
-            if (!response.ok) {
-                throw new Error(
-                    getErrorMessage(
-                        data,
-                        `Failed to close attendance (${response.status})`
-                    )
-                );
-            }
-
-            if (!mountedRef.current) {
                 return;
             }
 
-            // -----------------------------------------
-            // STOP ALL QR ACTIVITY
-            // -----------------------------------------
+            startingRef.current =
+                true;
 
-            clearAllQRTimers();
-
-            refreshInProgress.current = false;
-
-            qrTokenRef.current = "";
-            qrExpiryRef.current = null;
-
-            // -----------------------------------------
-            // CLEAR UI
-            // -----------------------------------------
-
-            setSession(null);
-            sessionRef.current = null;
-
-            setQrImage("");
-            setQrToken("");
-
-            setTimeLeft(
-                QR_EXPIRY_SECONDS
-            );
-
-            setMessage(
-                "Attendance session closed successfully."
-            );
+            setStarting(true);
 
             setError("");
-        } catch (err) {
-            console.error(
-                "Close attendance error:",
-                err
-            );
 
-            if (mountedRef.current) {
-                setError(
-                    err.message ||
-                        "Unable to close attendance session."
+            setMessage("");
+
+            try {
+                const token =
+                    getAuthToken();
+
+                if (!token) {
+                    throw new Error(
+                        "Authentication token not found. Please login again."
+                    );
+                }
+
+                const selected =
+                    subjects.find(
+                        (item) =>
+                            String(
+                                item?.allocation_id ??
+                                    item?.subject_allocation_id ??
+                                    item?.id
+                            ) ===
+                            String(
+                                selectedAllocation
+                            )
+                    );
+
+                const allocationId =
+                    selected?.allocation_id ??
+                    selected?.subject_allocation_id ??
+                    selectedAllocation;
+
+                const subjectId =
+                    selected?.subject_id ??
+                    selected?.subject
+                        ?.subject_id ??
+                    null;
+
+                const body = {
+                    allocation_id:
+                        Number(
+                            allocationId
+                        ),
+                };
+
+                if (subjectId) {
+                    body.subject_id =
+                        Number(
+                            subjectId
+                        );
+                }
+
+                console.log(
+                    "Starting attendance session:",
+                    body
                 );
-            }
-        } finally {
-            closingRef.current = false;
 
-            if (mountedRef.current) {
-                setClosing(false);
+                const response =
+                    await fetch(
+                        `${API_URL}/attendance-sessions`,
+                        {
+                            method:
+                                "POST",
+
+                            headers: {
+                                Authorization:
+                                    `Bearer ${token}`,
+
+                                "Content-Type":
+                                    "application/json",
+                            },
+
+                            body:
+                                JSON.stringify(
+                                    body
+                                ),
+                        }
+                    );
+
+                const data =
+                    await getResponseData(
+                        response
+                    );
+
+                if (!response.ok) {
+                    throw new Error(
+                        getErrorMessage(
+                            data,
+                            `Failed to start attendance (${response.status})`
+                        )
+                    );
+                }
+
+                if (
+                    !mountedRef.current
+                ) {
+                    return;
+                }
+
+                const newSession =
+                    extractSession(
+                        data
+                    );
+
+                if (
+                    !newSession
+                ) {
+                    throw new Error(
+                        "Attendance session was created but session data was not returned."
+                    );
+                }
+
+                const sessionId =
+                    newSession.session_id;
+
+                if (!sessionId) {
+                    throw new Error(
+                        "Attendance session ID was not returned."
+                    );
+                }
+
+                // -----------------------------------------
+                // Clear previous QR
+                // -----------------------------------------
+
+                clearAllQRTimers();
+
+                qrTokenRef.current =
+                    "";
+
+                qrExpiryRef.current =
+                    null;
+
+                localQRExpiryRef.current =
+                    null;
+
+                setQrToken("");
+
+                setQrImage("");
+
+                setTimeLeft(
+                    QR_EXPIRY_SECONDS
+                );
+
+                // -----------------------------------------
+                // Set session
+                // -----------------------------------------
+
+                sessionRef.current =
+                    newSession;
+
+                setSession(
+                    newSession
+                );
+
+                // -----------------------------------------
+                // QR returned during creation
+                // -----------------------------------------
+
+                const createdQRImage =
+                    extractQRImage(
+                        data
+                    );
+
+                const createdQRToken =
+                    extractQRToken(
+                        data
+                    );
+
+                const createdQRExpiry =
+                    extractQRExpiry(
+                        data
+                    );
+
+                if (
+                    createdQRToken
+                ) {
+                    qrTokenRef.current =
+                        createdQRToken;
+
+                    setQrToken(
+                        createdQRToken
+                    );
+                }
+
+                if (
+                    createdQRImage
+                ) {
+                    setQrImage(
+                        createdQRImage
+                    );
+                }
+
+                if (
+                    createdQRExpiry
+                ) {
+                    qrExpiryRef.current =
+                        createdQRExpiry;
+
+                    // NEW QR = exactly 15 seconds
+                    startCountdown(
+                        createdQRExpiry,
+                        true
+                    );
+
+                    scheduleQRRefresh(
+                        createdQRExpiry,
+                        sessionId
+                    );
+                }
+
+                // -----------------------------------------
+                // If QR was not included, fetch it.
+                // -----------------------------------------
+
+                if (
+                    !createdQRImage ||
+                    !createdQRToken ||
+                    !createdQRExpiry
+                ) {
+                    await refreshQR(
+                        sessionId,
+                        {
+                            force:
+                                false,
+                            silent:
+                                false,
+                        }
+                    );
+                }
+
+                // -----------------------------------------
+                // Start automatic QR monitoring.
+                // -----------------------------------------
+
+                startQRPolling(
+                    sessionId
+                );
+
+                setMessage(
+                    "Attendance started. QR code is active for 15 seconds."
+                );
+            } catch (err) {
+                console.error(
+                    "Start attendance error:",
+                    err
+                );
+
+                if (
+                    mountedRef.current
+                ) {
+                    setError(
+                        err.message ||
+                            "Unable to start attendance."
+                    );
+                }
+            } finally {
+                startingRef.current =
+                    false;
+
+                if (
+                    mountedRef.current
+                ) {
+                    setStarting(
+                        false
+                    );
+                }
             }
-        }
-    };
+        };
+
 
     // =================================================
-    // MANUAL QR REFRESH
+    // CLOSE ATTENDANCE
+    // =================================================
+
+    const closeSession =
+        async () => {
+            if (
+                closingRef.current ||
+                !sessionRef.current
+                    ?.session_id
+            ) {
+                return;
+            }
+
+            const confirmed =
+                window.confirm(
+                    "Are you sure you want to close this attendance session?"
+                );
+
+            if (!confirmed) {
+                return;
+            }
+
+            closingRef.current =
+                true;
+
+            setClosing(true);
+
+            setError("");
+
+            setMessage("");
+
+            try {
+                const token =
+                    getAuthToken();
+
+                if (!token) {
+                    throw new Error(
+                        "Authentication token not found. Please login again."
+                    );
+                }
+
+                const sessionId =
+                    sessionRef.current
+                        .session_id;
+
+                const response =
+                    await fetch(
+                        `${API_URL}/attendance-sessions/${sessionId}/close`,
+                        {
+                            method:
+                                "PATCH",
+
+                            headers: {
+                                Authorization:
+                                    `Bearer ${token}`,
+
+                                "Content-Type":
+                                    "application/json",
+                            },
+                        }
+                    );
+
+                const data =
+                    await getResponseData(
+                        response
+                    );
+
+                if (!response.ok) {
+                    throw new Error(
+                        getErrorMessage(
+                            data,
+                            `Failed to close attendance (${response.status})`
+                        )
+                    );
+                }
+
+                if (
+                    !mountedRef.current
+                ) {
+                    return;
+                }
+
+                // -----------------------------------------
+                // STOP QR
+                // -----------------------------------------
+
+                clearAllQRTimers();
+
+                refreshInProgress.current =
+                    false;
+
+                qrTokenRef.current =
+                    "";
+
+                qrExpiryRef.current =
+                    null;
+
+                localQRExpiryRef.current =
+                    null;
+
+                // -----------------------------------------
+                // CLEAR SESSION
+                // -----------------------------------------
+
+                sessionRef.current =
+                    null;
+
+                setSession(null);
+
+                setQrImage("");
+
+                setQrToken("");
+
+                setTimeLeft(
+                    QR_EXPIRY_SECONDS
+                );
+
+                setMessage(
+                    "Attendance session closed successfully."
+                );
+
+                setError("");
+            } catch (err) {
+                console.error(
+                    "Close attendance error:",
+                    err
+                );
+
+                if (
+                    mountedRef.current
+                ) {
+                    setError(
+                        err.message ||
+                            "Unable to close attendance session."
+                    );
+                }
+            } finally {
+                closingRef.current =
+                    false;
+
+                if (
+                    mountedRef.current
+                ) {
+                    setClosing(
+                        false
+                    );
+                }
+            }
+        };
+
+
+    // =================================================
+    // MANUAL REFRESH
     //
-    // This intentionally uses force=true.
-    //
-    // Teacher clicking "Refresh QR" gets a brand-new
-    // QR immediately.
+    // force=true means:
+    // current QR becomes invalid
+    // new QR is generated
+    // countdown returns to 15
     // =================================================
 
-    const manualRefreshQR = async () => {
-        if (!sessionRef.current?.session_id) {
-            return;
-        }
+    const manualRefreshQR =
+        async () => {
+            const sessionId =
+                sessionRef.current
+                    ?.session_id;
 
-        setError("");
-        setMessage("");
-
-        await refreshQR(
-            sessionRef.current.session_id,
-            {
-                force: true,
-                silent: false,
+            if (!sessionId) {
+                return;
             }
-        );
-    };
 
-    // =================================================
-    // SELECTED SUBJECT INFORMATION
-    // =================================================
+            setError("");
 
-    const selectedSubject =
-        subjects.find(
-            (item) =>
-                String(
-                    item.allocation_id ??
-                        item.subject_allocation_id ??
-                        item.id
-                ) ===
-                String(selectedAllocation)
-        );
+            setMessage("");
+
+            await refreshQR(
+                sessionId,
+                {
+                    force:
+                        true,
+                    silent:
+                        false,
+                }
+            );
+        };
+
 
     // =================================================
     // DISPLAY HELPERS
     // =================================================
 
-    const getSubjectName = (item) => {
-        return (
-            item?.subject_name ||
-            item?.subject?.subject_name ||
-            item?.name ||
-            item?.subject ||
-            "Subject"
-        );
-    };
+    const getSubjectName =
+        (item) => {
+            return (
+                item?.subject_name ||
+                item?.subject
+                    ?.subject_name ||
+                item?.name ||
+                (
+                    typeof item?.subject ===
+                    "string"
+                        ? item.subject
+                        : ""
+                ) ||
+                "Subject"
+            );
+        };
 
-    const getSubjectCode = (item) => {
-        return (
-            item?.subject_code ||
-            item?.subject?.subject_code ||
-            item?.code ||
-            ""
-        );
-    };
 
-    const getClassName = (item) => {
-        return (
-            item?.class_name ||
-            item?.class?.class_name ||
-            item?.className ||
-            ""
-        );
-    };
+    const getSubjectCode =
+        (item) => {
+            return (
+                item?.subject_code ||
+                item?.subject
+                    ?.subject_code ||
+                item?.code ||
+                ""
+            );
+        };
 
-    const getSectionName = (item) => {
-        return (
-            item?.section_name ||
-            item?.section ||
-            item?.sectionName ||
-            ""
-        );
-    };
+
+    const getClassName =
+        (item) => {
+            return (
+                item?.class_name ||
+                item?.class
+                    ?.class_name ||
+                item?.className ||
+                ""
+            );
+        };
+
+
+    const getSectionName =
+        (item) => {
+            return (
+                item?.section_name ||
+                item?.section ||
+                item?.sectionName ||
+                ""
+            );
+        };
+
 
     const isActive =
         Boolean(session) &&
@@ -1555,6 +2026,21 @@ export default function StartAttendance() {
                 "ACTIVE"
         );
 
+
+    const selectedSubject =
+        subjects.find(
+            (item) =>
+                String(
+                    item?.allocation_id ??
+                        item?.subject_allocation_id ??
+                        item?.id
+                ) ===
+                String(
+                    selectedAllocation
+                )
+        );
+
+
     // =================================================
     // RENDER
     // =================================================
@@ -1562,35 +2048,50 @@ export default function StartAttendance() {
     return (
         <div
             style={{
-                maxWidth: "1100px",
-                margin: "0 auto",
-                padding: "24px",
+                maxWidth:
+                    "1100px",
+                margin:
+                    "0 auto",
+                padding:
+                    "24px",
             }}
         >
             {/* =========================================
-                PAGE HEADER
+                HEADER
             ========================================= */}
 
             <div
                 style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "12px",
-                    marginBottom: "24px",
+                    display:
+                        "flex",
+                    alignItems:
+                        "center",
+                    gap:
+                        "12px",
+                    marginBottom:
+                        "24px",
                 }}
             >
                 <div
                     style={{
-                        width: "48px",
-                        height: "48px",
-                        borderRadius: "12px",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
+                        width:
+                            "48px",
+                        height:
+                            "48px",
+                        borderRadius:
+                            "12px",
+                        display:
+                            "flex",
+                        alignItems:
+                            "center",
+                        justifyContent:
+                            "center",
                         background:
                             "rgba(37, 99, 235, 0.12)",
-                        color: "#2563eb",
-                        fontSize: "22px",
+                        color:
+                            "#2563eb",
+                        fontSize:
+                            "22px",
                     }}
                 >
                     <FaQrcode />
@@ -1599,9 +2100,12 @@ export default function StartAttendance() {
                 <div>
                     <h1
                         style={{
-                            margin: 0,
-                            fontSize: "28px",
-                            fontWeight: 700,
+                            margin:
+                                0,
+                            fontSize:
+                                "28px",
+                            fontWeight:
+                                700,
                         }}
                     >
                         Start Attendance
@@ -1611,15 +2115,17 @@ export default function StartAttendance() {
                         style={{
                             margin:
                                 "4px 0 0",
-                            color: "#64748b",
+                            color:
+                                "#64748b",
                         }}
                     >
-                        Generate a rotating QR
-                        code for student
+                        Generate a rotating
+                        QR code for student
                         attendance.
                     </p>
                 </div>
             </div>
+
 
             {/* =========================================
                 SUCCESS MESSAGE
@@ -1628,17 +2134,24 @@ export default function StartAttendance() {
             {message && (
                 <div
                     style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "10px",
-                        padding: "14px 16px",
-                        marginBottom: "18px",
-                        borderRadius: "10px",
+                        display:
+                            "flex",
+                        alignItems:
+                            "center",
+                        gap:
+                            "10px",
+                        padding:
+                            "14px 16px",
+                        marginBottom:
+                            "18px",
+                        borderRadius:
+                            "10px",
                         background:
                             "#ecfdf5",
                         border:
                             "1px solid #a7f3d0",
-                        color: "#047857",
+                        color:
+                            "#047857",
                     }}
                 >
                     <FaCheckCircle />
@@ -1649,6 +2162,7 @@ export default function StartAttendance() {
                 </div>
             )}
 
+
             {/* =========================================
                 ERROR MESSAGE
             ========================================= */}
@@ -1656,24 +2170,27 @@ export default function StartAttendance() {
             {error && (
                 <div
                     style={{
-                        display: "flex",
-                        alignItems: "flex-start",
-                        gap: "10px",
-                        padding: "14px 16px",
-                        marginBottom: "18px",
-                        borderRadius: "10px",
+                        display:
+                            "flex",
+                        alignItems:
+                            "flex-start",
+                        gap:
+                            "10px",
+                        padding:
+                            "14px 16px",
+                        marginBottom:
+                            "18px",
+                        borderRadius:
+                            "10px",
                         background:
                             "#fef2f2",
                         border:
                             "1px solid #fecaca",
-                        color: "#b91c1c",
+                        color:
+                            "#b91c1c",
                     }}
                 >
-                    <FaExclamationTriangle
-                        style={{
-                            marginTop: "2px",
-                        }}
-                    />
+                    <FaExclamationTriangle />
 
                     <span>
                         {error}
@@ -1681,51 +2198,68 @@ export default function StartAttendance() {
                 </div>
             )}
 
+
             {/* =========================================
-                MAIN GRID
+                MAIN CONTENT
             ========================================= */}
 
             <div
+                className="start-attendance-grid"
                 style={{
-                    display: "grid",
+                    display:
+                        "grid",
                     gridTemplateColumns:
                         "minmax(300px, 1fr) minmax(320px, 460px)",
-                    gap: "24px",
-                    alignItems: "start",
+                    gap:
+                        "24px",
+                    alignItems:
+                        "start",
                 }}
             >
+
                 {/* =====================================
-                    LEFT SIDE
+                    LEFT PANEL
                 ===================================== */}
 
                 <div
                     style={{
-                        background: "#ffffff",
+                        background:
+                            "#ffffff",
                         border:
                             "1px solid #e2e8f0",
-                        borderRadius: "16px",
-                        padding: "24px",
+                        borderRadius:
+                            "16px",
+                        padding:
+                            "24px",
                         boxShadow:
                             "0 4px 18px rgba(15, 23, 42, 0.06)",
                     }}
                 >
+
                     <h2
                         style={{
-                            marginTop: 0,
-                            marginBottom: "20px",
-                            fontSize: "20px",
+                            marginTop:
+                                0,
+                            marginBottom:
+                                "20px",
+                            fontSize:
+                                "20px",
                         }}
                     >
                         Attendance Setup
                     </h2>
 
-                    {/* SUBJECT SELECT */}
+
+                    {/* SUBJECT */}
 
                     <label
                         style={{
-                            display: "block",
-                            marginBottom: "8px",
-                            fontWeight: 600,
+                            display:
+                                "block",
+                            marginBottom:
+                                "8px",
+                            fontWeight:
+                                600,
                         }}
                     >
                         Subject / Class
@@ -1735,13 +2269,20 @@ export default function StartAttendance() {
                         value={
                             selectedAllocation
                         }
-                        onChange={(event) => {
+                        onChange={(
+                            event
+                        ) => {
                             setSelectedAllocation(
                                 event.target.value
                             );
 
-                            setError("");
-                            setMessage("");
+                            setError(
+                                ""
+                            );
+
+                            setMessage(
+                                ""
+                            );
                         }}
                         disabled={
                             loadingSubjects ||
@@ -1749,16 +2290,20 @@ export default function StartAttendance() {
                             isActive
                         }
                         style={{
-                            width: "100%",
+                            width:
+                                "100%",
                             padding:
                                 "12px 14px",
-                            borderRadius: "10px",
+                            borderRadius:
+                                "10px",
                             border:
                                 "1px solid #cbd5e1",
                             background:
                                 "#ffffff",
-                            fontSize: "15px",
-                            outline: "none",
+                            fontSize:
+                                "15px",
+                            outline:
+                                "none",
                             marginBottom:
                                 "18px",
                         }}
@@ -1770,7 +2315,10 @@ export default function StartAttendance() {
                         </option>
 
                         {subjects.map(
-                            (item, index) => {
+                            (
+                                item,
+                                index
+                            ) => {
                                 const id =
                                     item?.allocation_id ??
                                     item?.subject_allocation_id ??
@@ -1782,11 +2330,15 @@ export default function StartAttendance() {
                                             id ??
                                             index
                                         }
-                                        value={id}
+                                        value={
+                                            id
+                                        }
                                     >
-                                        {getSubjectName(
-                                            item
-                                        )}
+                                        {
+                                            getSubjectName(
+                                                item
+                                            )
+                                        }
 
                                         {getSubjectCode(
                                             item
@@ -1817,7 +2369,8 @@ export default function StartAttendance() {
                         )}
                     </select>
 
-                    {/* SELECTED INFO */}
+
+                    {/* SELECTED SUBJECT */}
 
                     {selectedSubject &&
                         !isActive && (
@@ -1896,9 +2449,8 @@ export default function StartAttendance() {
                             </div>
                         )}
 
-                    {/* =================================
-                        SESSION INFORMATION
-                    ================================= */}
+
+                    {/* ACTIVE SESSION */}
 
                     {isActive && (
                         <div
@@ -1921,7 +2473,8 @@ export default function StartAttendance() {
                                         "flex",
                                     alignItems:
                                         "center",
-                                    gap: "9px",
+                                    gap:
+                                        "9px",
                                     marginBottom:
                                         "10px",
                                     color:
@@ -1970,6 +2523,19 @@ export default function StartAttendance() {
                                     </div>
                                 )}
 
+                                {getSectionName(
+                                    session
+                                ) && (
+                                    <div>
+                                        <strong>
+                                            Section:
+                                        </strong>{" "}
+                                        {getSectionName(
+                                            session
+                                        )}
+                                    </div>
+                                )}
+
                                 {session.session_id && (
                                     <div>
                                         <strong>
@@ -1984,9 +2550,8 @@ export default function StartAttendance() {
                         </div>
                     )}
 
-                    {/* =================================
-                        QR STATUS
-                    ================================= */}
+
+                    {/* QR MONITORING */}
 
                     {isActive && (
                         <div
@@ -2011,8 +2576,6 @@ export default function StartAttendance() {
                                         "center",
                                     justifyContent:
                                         "space-between",
-                                    gap:
-                                        "12px",
                                 }}
                             >
                                 <div
@@ -2028,9 +2591,7 @@ export default function StartAttendance() {
                                     <FaSyncAlt
                                         style={{
                                             animation:
-                                                refreshingQR
-                                                    ? "spin 1s linear infinite"
-                                                    : "none",
+                                                "spin 1s linear infinite",
                                         }}
                                     />
 
@@ -2041,12 +2602,12 @@ export default function StartAttendance() {
 
                                 <span
                                     style={{
-                                        fontSize:
-                                            "13px",
                                         color:
                                             "#16a34a",
                                         fontWeight:
-                                            600,
+                                            700,
+                                        fontSize:
+                                            "13px",
                                     }}
                                 >
                                     LIVE
@@ -2065,20 +2626,19 @@ export default function StartAttendance() {
                                         1.5,
                                 }}
                             >
-                                The QR is monitored
-                                automatically. When a
-                                student scans
-                                successfully, this
-                                screen detects the new
-                                QR and replaces it
+                                When a student
+                                successfully
+                                scans, the current
+                                QR is invalidated
+                                and the next QR is
+                                displayed
                                 automatically.
                             </p>
                         </div>
                     )}
 
-                    {/* =================================
-                        BUTTONS
-                    ================================= */}
+
+                    {/* BUTTONS */}
 
                     {!isActive ? (
                         <button
@@ -2092,8 +2652,10 @@ export default function StartAttendance() {
                                 !selectedAllocation
                             }
                             style={{
-                                width: "100%",
-                                border: "none",
+                                width:
+                                    "100%",
+                                border:
+                                    "none",
                                 borderRadius:
                                     "10px",
                                 padding:
@@ -2104,15 +2666,18 @@ export default function StartAttendance() {
                                     "center",
                                 justifyContent:
                                     "center",
-                                gap: "9px",
+                                gap:
+                                    "9px",
                                 background:
                                     starting ||
                                     loadingSubjects ||
                                     !selectedAllocation
                                         ? "#94a3b8"
                                         : "#2563eb",
-                                color: "#ffffff",
-                                fontWeight: 700,
+                                color:
+                                    "#ffffff",
+                                fontWeight:
+                                    700,
                                 fontSize:
                                     "15px",
                                 cursor:
@@ -2138,6 +2703,9 @@ export default function StartAttendance() {
                                     "10px",
                             }}
                         >
+
+                            {/* MANUAL NEW QR */}
+
                             <button
                                 type="button"
                                 onClick={
@@ -2162,7 +2730,8 @@ export default function StartAttendance() {
                                         "center",
                                     justifyContent:
                                         "center",
-                                    gap: "9px",
+                                    gap:
+                                        "9px",
                                     background:
                                         "#ffffff",
                                     color:
@@ -2188,6 +2757,9 @@ export default function StartAttendance() {
                                     : "Generate New QR"}
                             </button>
 
+
+                            {/* CLOSE */}
+
                             <button
                                 type="button"
                                 onClick={
@@ -2212,7 +2784,8 @@ export default function StartAttendance() {
                                         "center",
                                     justifyContent:
                                         "center",
-                                    gap: "9px",
+                                    gap:
+                                        "9px",
                                     background:
                                         closing
                                             ? "#94a3b8"
@@ -2238,22 +2811,28 @@ export default function StartAttendance() {
                     )}
                 </div>
 
+
                 {/* =====================================
-                    RIGHT SIDE — QR
+                    RIGHT QR PANEL
                 ===================================== */}
 
                 <div
                     style={{
-                        background: "#ffffff",
+                        background:
+                            "#ffffff",
                         border:
                             "1px solid #e2e8f0",
-                        borderRadius: "16px",
-                        padding: "24px",
+                        borderRadius:
+                            "16px",
+                        padding:
+                            "24px",
                         boxShadow:
                             "0 4px 18px rgba(15, 23, 42, 0.06)",
-                        textAlign: "center",
+                        textAlign:
+                            "center",
                     }}
                 >
+
                     <div
                         style={{
                             display:
@@ -2262,7 +2841,8 @@ export default function StartAttendance() {
                                 "center",
                             alignItems:
                                 "center",
-                            gap: "9px",
+                            gap:
+                                "9px",
                             marginBottom:
                                 "18px",
                         }}
@@ -2271,7 +2851,8 @@ export default function StartAttendance() {
 
                         <h2
                             style={{
-                                margin: 0,
+                                margin:
+                                    0,
                                 fontSize:
                                     "20px",
                             }}
@@ -2280,12 +2861,14 @@ export default function StartAttendance() {
                         </h2>
                     </div>
 
-                    {/* =================================
-                        QR IMAGE
-                    ================================= */}
 
-                    {isActive && qrImage ? (
+                    {/* QR AVAILABLE */}
+
+                    {isActive &&
+                    qrImage ? (
                         <>
+                            {/* QR IMAGE */}
+
                             <div
                                 style={{
                                     display:
@@ -2335,9 +2918,8 @@ export default function StartAttendance() {
                                 </div>
                             </div>
 
-                            {/* =================================
-                                COUNTDOWN
-                            ================================= */}
+
+                            {/* COUNTDOWN */}
 
                             <div
                                 style={{
@@ -2367,6 +2949,9 @@ export default function StartAttendance() {
                                 </span>
                             </div>
 
+
+                            {/* EXPLANATION */}
+
                             <div
                                 style={{
                                     fontSize:
@@ -2377,15 +2962,15 @@ export default function StartAttendance() {
                                         "18px",
                                 }}
                             >
-                                QR changes after a
-                                successful scan or
-                                when the 15-second
-                                timer expires.
+                                QR changes after
+                                a successful
+                                scan or when the
+                                15-second timer
+                                expires.
                             </div>
 
-                            {/* =================================
-                                PROGRESS BAR
-                            ================================= */}
+
+                            {/* PROGRESS BAR */}
 
                             <div
                                 style={{
@@ -2405,15 +2990,18 @@ export default function StartAttendance() {
                                     style={{
                                         height:
                                             "100%",
-                                        width: `${Math.max(
-                                            0,
-                                            Math.min(
-                                                100,
-                                                (timeLeft /
-                                                    QR_EXPIRY_SECONDS) *
-                                                    100
-                                            )
-                                        )}%`,
+                                        width:
+                                            `${Math.max(
+                                                0,
+                                                Math.min(
+                                                    100,
+                                                    (
+                                                        timeLeft /
+                                                        QR_EXPIRY_SECONDS
+                                                    ) *
+                                                        100
+                                                )
+                                            )}%`,
                                         background:
                                             timeLeft <=
                                             5
@@ -2425,9 +3013,8 @@ export default function StartAttendance() {
                                 />
                             </div>
 
-                            {/* =================================
-                                QR ROTATION STATUS
-                            ================================= */}
+
+                            {/* LIVE STATUS */}
 
                             <div
                                 style={{
@@ -2459,28 +3046,26 @@ export default function StartAttendance() {
                                 scans...
                             </div>
 
-                            {/* =================================
-                                QR TOKEN DEBUG INFO
-                            ================================= */}
 
-                            {qrToken && (
-                                <div
-                                    style={{
-                                        marginTop:
-                                            "12px",
-                                        fontSize:
-                                            "11px",
-                                        color:
-                                            "#94a3b8",
-                                        wordBreak:
-                                            "break-all",
-                                    }}
-                                >
-                                    QR token active
-                                </div>
-                            )}
+                            {/* TOKEN STATUS */}
+
+                            <div
+                                style={{
+                                    marginTop:
+                                        "12px",
+                                    fontSize:
+                                        "11px",
+                                    color:
+                                        "#94a3b8",
+                                }}
+                            >
+                                QR token active
+                            </div>
                         </>
                     ) : isActive ? (
+
+                        /* LOADING QR */
+
                         <div
                             style={{
                                 minHeight:
@@ -2520,8 +3105,10 @@ export default function StartAttendance() {
                                             .current
                                             ?.session_id,
                                         {
-                                            force: false,
-                                            silent: false,
+                                            force:
+                                                false,
+                                            silent:
+                                                false,
                                         }
                                     )
                                 }
@@ -2543,7 +3130,8 @@ export default function StartAttendance() {
                                         "flex",
                                     alignItems:
                                         "center",
-                                    gap: "7px",
+                                    gap:
+                                        "7px",
                                 }}
                             >
                                 <FaRedo />
@@ -2552,79 +3140,88 @@ export default function StartAttendance() {
                             </button>
                         </div>
                     ) : (
+
+                        /* NO SESSION */
+
                         <div
                             style={{
                                 minHeight:
                                     "360px",
                                 display:
                                     "flex",
-                                    flexDirection:
-                                        "column",
-                                    alignItems:
-                                        "center",
-                                    justifyContent:
-                                        "center",
-                                    color:
-                                        "#64748b",
-                                    gap:
+                                flexDirection:
+                                    "column",
+                                alignItems:
+                                    "center",
+                                justifyContent:
+                                    "center",
+                                color:
+                                    "#64748b",
+                                gap:
+                                    "14px",
+                            }}
+                        >
+                            <FaQrcode
+                                style={{
+                                    fontSize:
+                                        "72px",
+                                    opacity:
+                                        0.3,
+                                }}
+                            />
+
+                            <strong>
+                                No active
+                                attendance
+                                session
+                            </strong>
+
+                            <span
+                                style={{
+                                    fontSize:
                                         "14px",
+                                    maxWidth:
+                                        "300px",
+                                    lineHeight:
+                                        1.5,
                                 }}
                             >
-                                <FaQrcode
-                                    style={{
-                                        fontSize:
-                                            "72px",
-                                        opacity:
-                                            0.3,
-                                    }}
-                                />
-
-                                <strong>
-                                    No active
-                                    attendance
-                                    session
-                                </strong>
-
-                                <span
-                                    style={{
-                                        fontSize:
-                                            "14px",
-                                        maxWidth:
-                                            "300px",
-                                        lineHeight:
-                                            1.5,
-                                    }}
-                                >
-                                    Select a
-                                    subject/class
-                                    and click
-                                    "Start
-                                    Attendance"
-                                    to generate
-                                    the QR code.
-                                </span>
-                            </div>
-                        )}
+                                Select a
+                                subject/class
+                                and click
+                                "Start
+                                Attendance"
+                                to generate
+                                the QR code.
+                            </span>
+                        </div>
+                    )}
                 </div>
             </div>
 
+
             {/* =============================================
-                HOW IT WORKS
+                AUTOMATIC QR FLOW INFORMATION
             ============================================== */}
 
             <div
                 style={{
-                    marginTop: "24px",
-                    background: "#ffffff",
+                    marginTop:
+                        "24px",
+                    background:
+                        "#ffffff",
                     border:
                         "1px solid #e2e8f0",
-                    borderRadius: "16px",
-                    padding: "22px",
+                    borderRadius:
+                        "16px",
+                    padding:
+                        "22px",
                 }}
             >
                 <h3
                     style={{
-                        marginTop: 0,
+                        marginTop:
+                            0,
                         marginBottom:
                             "16px",
                         fontSize:
@@ -2637,8 +3234,10 @@ export default function StartAttendance() {
                                 "8px",
                         }}
                     />
+
                     Automatic QR Rotation
                 </h3>
+
 
                 <div
                     style={{
@@ -2646,9 +3245,11 @@ export default function StartAttendance() {
                             "grid",
                         gridTemplateColumns:
                             "repeat(auto-fit, minmax(220px, 1fr))",
-                        gap: "14px",
+                        gap:
+                            "14px",
                     }}
                 >
+
                     <div
                         style={{
                             padding:
@@ -2677,9 +3278,13 @@ export default function StartAttendance() {
                         >
                             A new QR is
                             generated when
-                            attendance starts.
+                            attendance starts
+                            and the timer
+                            begins at 15
+                            seconds.
                         </p>
                     </div>
+
 
                     <div
                         style={{
@@ -2707,12 +3312,15 @@ export default function StartAttendance() {
                                     1.5,
                             }}
                         >
-                            A student can
-                            successfully use
-                            the current QR
-                            only once.
+                            The backend
+                            validates the
+                            student's QR
+                            request and
+                            prevents reuse
+                            of the old QR.
                         </p>
                     </div>
+
 
                     <div
                         style={{
@@ -2742,10 +3350,13 @@ export default function StartAttendance() {
                         >
                             After a successful
                             scan, the backend
-                            immediately creates
-                            another QR.
+                            creates a new QR.
+                            The teacher screen
+                            detects it
+                            automatically.
                         </p>
                     </div>
+
 
                     <div
                         style={{
@@ -2774,18 +3385,18 @@ export default function StartAttendance() {
                             }}
                         >
                             If nobody scans,
-                            the current QR
-                            expires after 15
-                            seconds and the
-                            next QR is generated
-                            automatically.
+                            the QR expires
+                            and the backend
+                            creates the next
+                            QR automatically.
                         </p>
                     </div>
                 </div>
             </div>
 
+
             {/* =============================================
-                MOBILE RESPONSIVE STYLE
+                RESPONSIVE + ANIMATION
             ============================================== */}
 
             <style>
@@ -2794,6 +3405,7 @@ export default function StartAttendance() {
                         from {
                             transform: rotate(0deg);
                         }
+
                         to {
                             transform: rotate(360deg);
                         }

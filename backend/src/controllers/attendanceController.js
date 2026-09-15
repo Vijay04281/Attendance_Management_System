@@ -2023,19 +2023,18 @@ const scanAttendance = async (
             });
         }
 
-        const [expiryRows] =
-            await connection.query(
-                `
-                SELECT
-                    CASE
-                        WHEN ? > NOW()
-                        THEN 1
-                        ELSE 0
-                    END AS expired
-                `,
-                [session.qr_expires_at]
-            );
-
+ const [expiryRows] =
+    await connection.query(
+        `
+        SELECT
+            CASE
+                WHEN ? <= NOW()
+                THEN 1
+                ELSE 0
+            END AS expired
+        `,
+        [session.qr_expires_at]
+    );
         if (
             expiryRows.length &&
             Number(expiryRows[0].expired) === 1
