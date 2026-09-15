@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+    useCallback,
+    useEffect,
+    useRef,
+    useState,
+} from "react";
+
 import {
     FaQrcode,
     FaPlay,
@@ -10,7 +16,10 @@ import {
     FaExclamationTriangle,
 } from "react-icons/fa";
 
-const API_URL = "https://attendance-management-system-gpci.onrender.com/api";
+const API_URL =
+    "https://attendance-management-system-gpci.onrender.com/api";
+
+const QR_EXPIRY_SECONDS = 15;
 
 const StartAttendance = () => {
     // ======================================================
@@ -18,14 +27,20 @@ const StartAttendance = () => {
     // ======================================================
 
     const [subjects, setSubjects] = useState([]);
-    const [selectedAllocation, setSelectedAllocation] = useState("");
+    const [selectedAllocation, setSelectedAllocation] =
+        useState("");
+
     const [session, setSession] = useState(null);
     const [qrImage, setQrImage] = useState("");
     const [timeLeft, setTimeLeft] = useState(0);
 
-    const [loadingSubjects, setLoadingSubjects] = useState(true);
+    const [loadingSubjects, setLoadingSubjects] =
+        useState(true);
+
     const [starting, setStarting] = useState(false);
-    const [refreshingQR, setRefreshingQR] = useState(false);
+    const [refreshingQR, setRefreshingQR] =
+        useState(false);
+
     const [closing, setClosing] = useState(false);
 
     const [message, setMessage] = useState("");
@@ -36,26 +51,24 @@ const StartAttendance = () => {
     // ======================================================
 
     const refreshInProgress = useRef(false);
-
     const initialLoadStarted = useRef(false);
-
     const mountedRef = useRef(false);
 
     const sessionRef = useRef(null);
 
     const qrExpiryRef = useRef(null);
-
     const qrRefreshTimerRef = useRef(null);
-
     const countdownTimerRef = useRef(null);
 
     const startingRef = useRef(false);
-
     const closingRef = useRef(false);
 
     const token = localStorage.getItem("token");
 
-    // Keep session ref synchronized with state
+    // ======================================================
+    // KEEP SESSION REF SYNCHRONIZED
+    // ======================================================
+
     useEffect(() => {
         sessionRef.current = session;
     }, [session]);
@@ -74,7 +87,10 @@ const StartAttendance = () => {
         try {
             return JSON.parse(text);
         } catch (err) {
-            console.error("Invalid server response:", text);
+            console.error(
+                "Invalid server response:",
+                text
+            );
 
             throw new Error(
                 `Server returned an invalid response (${response.status}).`
@@ -83,17 +99,129 @@ const StartAttendance = () => {
     };
 
     // ======================================================
+    // NORMALIZE API DATA
+    //
+    // Supports:
+    //
+    // data.qr_image
+    // data.qr_code
+    // data.qrImage
+    // data.qr
+    //
+    // and also:
+    //
+    // data.data.qr_image
+    // data.data.qr_code
+    // ======================================================
+
+    const extractQRImage = (data) => {
+        if (!data || typeof data !== "object") {
+            return "";
+        }
+
+        const nested =
+            data.data &&
+            typeof data.data === "object"
+                ? data.data
+                : null;
+
+        const sessionData =
+            data.session &&
+            typeof data.session === "object"
+                ? data.session
+                : null;
+
+        const candidates = [
+            data.qr_image,
+            data.qr_code,
+            data.qrImage,
+            data.qr,
+            data.qrData,
+            data.qr_data,
+
+            nested?.qr_image,
+            nested?.qr_code,
+            nested?.qrImage,
+            nested?.qr,
+            nested?.qrData,
+            nested?.qr_data,
+
+            sessionData?.qr_image,
+            sessionData?.qr_code,
+            sessionData?.qrImage,
+            sessionData?.qr,
+        ];
+
+        for (const candidate of candidates) {
+            if (
+                typeof candidate === "string" &&
+                candidate.trim() !== ""
+            ) {
+                return candidate.trim();
+            }
+        }
+
+        return "";
+    };
+
+    // ======================================================
+    // EXTRACT QR EXPIRY
+    // ======================================================
+
+    const extractQRExpiry = (
+        data,
+        currentSession = null
+    ) => {
+        if (!data || typeof data !== "object") {
+            return (
+                currentSession?.qr_expires_at ||
+                null
+            );
+        }
+
+        const nested =
+            data.data &&
+            typeof data.data === "object"
+                ? data.data
+                : null;
+
+        const sessionData =
+            data.session &&
+            typeof data.session === "object"
+                ? data.session
+                : currentSession;
+
+        return (
+            data.qr_expires_at ||
+            data.expires_at ||
+            data.qrExpiresAt ||
+            nested?.qr_expires_at ||
+            nested?.expires_at ||
+            nested?.qrExpiresAt ||
+            sessionData?.qr_expires_at ||
+            sessionData?.qrExpiresAt ||
+            null
+        );
+    };
+
+    // ======================================================
     // CLEAR QR TIMERS
     // ======================================================
 
     const clearQRTimers = useCallback(() => {
         if (qrRefreshTimerRef.current) {
-            clearTimeout(qrRefreshTimerRef.current);
+            clearTimeout(
+                qrRefreshTimerRef.current
+            );
+
             qrRefreshTimerRef.current = null;
         }
 
         if (countdownTimerRef.current) {
-            clearInterval(countdownTimerRef.current);
+            clearInterval(
+                countdownTimerRef.current
+            );
+
             countdownTimerRef.current = null;
         }
 
@@ -104,182 +232,326 @@ const StartAttendance = () => {
     // CALCULATE TIME LEFT
     // ======================================================
 
-    const calculateTimeLeft = useCallback((expiresAt) => {
-        if (!expiresAt) {
-            return 0;
-        }
-
-        const expiryTime = new Date(expiresAt).getTime();
-
-        if (Number.isNaN(expiryTime)) {
-            return 0;
-        }
-
-        const now = Date.now();
-
-        return Math.max(
-            0,
-            Math.ceil((expiryTime - now) / 1000)
-        );
-    }, []);
-
-    // ======================================================
-    // SCHEDULE QR REFRESH
-    // ======================================================
-
-    const scheduleQRRefresh = useCallback(
-        (expiresAt, sessionId) => {
-            // Clear previous QR refresh timer
-            if (qrRefreshTimerRef.current) {
-                clearTimeout(qrRefreshTimerRef.current);
-                qrRefreshTimerRef.current = null;
+    const calculateTimeLeft = useCallback(
+        (expiresAt) => {
+            if (!expiresAt) {
+                return 0;
             }
 
-            if (!expiresAt || !sessionId) {
-                return;
+            let expiryTime;
+
+            // ------------------------------------------------
+            // MySQL datetime:
+            //
+            // 2026-09-15 20:30:15
+            //
+            // JavaScript can interpret this as local time,
+            // which is what we want for the backend date.
+            // ------------------------------------------------
+
+            if (
+                typeof expiresAt === "string" &&
+                /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(
+                    expiresAt
+                )
+            ) {
+                expiryTime = new Date(
+                    expiresAt.replace(
+                        " ",
+                        "T"
+                    )
+                ).getTime();
+            } else {
+                expiryTime =
+                    new Date(
+                        expiresAt
+                    ).getTime();
             }
 
-            const expiryTime = new Date(expiresAt).getTime();
-
-            if (Number.isNaN(expiryTime)) {
-                return;
+            if (
+                Number.isNaN(expiryTime)
+            ) {
+                return 0;
             }
 
-            qrExpiryRef.current = expiryTime;
-
-            const delay = Math.max(
-                1000,
-                expiryTime - Date.now() + 250
+            return Math.max(
+                0,
+                Math.ceil(
+                    (expiryTime -
+                        Date.now()) /
+                        1000
+                )
             );
-
-            qrRefreshTimerRef.current = setTimeout(() => {
-                qrRefreshTimerRef.current = null;
-
-                if (!mountedRef.current) {
-                    return;
-                }
-
-                if (!sessionRef.current) {
-                    return;
-                }
-
-                if (
-                    Number(sessionRef.current.session_id) !==
-                    Number(sessionId)
-                ) {
-                    return;
-                }
-
-                refreshQR(sessionId);
-            }, delay);
         },
         []
     );
 
     // ======================================================
+    // SCHEDULE QR REFRESH
+    // ======================================================
+
+    const scheduleQRRefresh =
+        useCallback(
+            (
+                expiresAt,
+                sessionId
+            ) => {
+                if (
+                    qrRefreshTimerRef.current
+                ) {
+                    clearTimeout(
+                        qrRefreshTimerRef.current
+                    );
+
+                    qrRefreshTimerRef.current =
+                        null;
+                }
+
+                if (
+                    !expiresAt ||
+                    !sessionId
+                ) {
+                    return;
+                }
+
+                let expiryTime;
+
+                if (
+                    typeof expiresAt ===
+                        "string" &&
+                    /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(
+                        expiresAt
+                    )
+                ) {
+                    expiryTime =
+                        new Date(
+                            expiresAt.replace(
+                                " ",
+                                "T"
+                            )
+                        ).getTime();
+                } else {
+                    expiryTime =
+                        new Date(
+                            expiresAt
+                        ).getTime();
+                }
+
+                if (
+                    Number.isNaN(
+                        expiryTime
+                    )
+                ) {
+                    return;
+                }
+
+                qrExpiryRef.current =
+                    expiryTime;
+
+                const delay =
+                    Math.max(
+                        1000,
+                        expiryTime -
+                            Date.now() +
+                            250
+                    );
+
+                qrRefreshTimerRef.current =
+                    setTimeout(() => {
+                        qrRefreshTimerRef.current =
+                            null;
+
+                        if (
+                            !mountedRef.current
+                        ) {
+                            return;
+                        }
+
+                        if (
+                            !sessionRef.current
+                        ) {
+                            return;
+                        }
+
+                        if (
+                            Number(
+                                sessionRef
+                                    .current
+                                    .session_id
+                            ) !==
+                            Number(
+                                sessionId
+                            )
+                        ) {
+                            return;
+                        }
+
+                        refreshQR(
+                            sessionId
+                        );
+                    }, delay);
+            },
+            []
+        );
+
+    // ======================================================
     // COUNTDOWN TIMER
     // ======================================================
 
-    const startCountdown = useCallback(
-        (expiresAt) => {
-            if (countdownTimerRef.current) {
-                clearInterval(countdownTimerRef.current);
-                countdownTimerRef.current = null;
-            }
+    const startCountdown =
+        useCallback(
+            (expiresAt) => {
+                if (
+                    countdownTimerRef.current
+                ) {
+                    clearInterval(
+                        countdownTimerRef.current
+                    );
 
-            if (!expiresAt) {
-                setTimeLeft(0);
-                return;
-            }
+                    countdownTimerRef.current =
+                        null;
+                }
 
-            const updateCountdown = () => {
-                const remaining =
-                    calculateTimeLeft(expiresAt);
+                if (!expiresAt) {
+                    setTimeLeft(0);
+                    return;
+                }
 
-                setTimeLeft(remaining);
+                const updateCountdown =
+                    () => {
+                        const remaining =
+                            calculateTimeLeft(
+                                expiresAt
+                            );
 
-                if (remaining <= 0) {
-                    if (countdownTimerRef.current) {
-                        clearInterval(
-                            countdownTimerRef.current
+                        setTimeLeft(
+                            remaining
                         );
 
-                        countdownTimerRef.current = null;
-                    }
-                }
-            };
+                        if (
+                            remaining <=
+                            0
+                        ) {
+                            if (
+                                countdownTimerRef.current
+                            ) {
+                                clearInterval(
+                                    countdownTimerRef.current
+                                );
 
-            updateCountdown();
+                                countdownTimerRef.current =
+                                    null;
+                            }
+                        }
+                    };
 
-            countdownTimerRef.current = setInterval(
-                updateCountdown,
-                1000
-            );
-        },
-        [calculateTimeLeft]
-    );
+                updateCountdown();
+
+                countdownTimerRef.current =
+                    setInterval(
+                        updateCountdown,
+                        1000
+                    );
+            },
+            [calculateTimeLeft]
+        );
 
     // ======================================================
     // REFRESH QR
     // ======================================================
 
     const refreshQR = useCallback(
-        async (sessionId = sessionRef.current?.session_id) => {
+        async (
+            sessionId =
+                sessionRef.current
+                    ?.session_id
+        ) => {
             if (!sessionId) {
                 console.error(
-                    "Cannot refresh QR: session ID missing"
+                    "Cannot refresh QR: session ID missing."
                 );
+
                 return;
             }
 
             if (!token) {
                 console.error(
-                    "Cannot refresh QR: authentication token missing"
+                    "Cannot refresh QR: authentication token missing."
                 );
+
                 return;
             }
 
-            if (refreshInProgress.current) {
+            if (
+                refreshInProgress.current
+            ) {
                 console.log(
                     "QR refresh already in progress. Skipping duplicate request."
                 );
+
                 return;
             }
 
-            // Do not refresh a session that is no longer active
-            const currentSession = sessionRef.current;
+            const currentSession =
+                sessionRef.current;
 
             if (
                 currentSession &&
-                Number(currentSession.session_id) !==
+                Number(
+                    currentSession.session_id
+                ) !==
                     Number(sessionId)
             ) {
                 console.log(
                     "Ignoring QR refresh for old session:",
                     sessionId
                 );
+
                 return;
             }
 
             try {
-                refreshInProgress.current = true;
+                refreshInProgress.current =
+                    true;
 
-                setRefreshingQR(true);
-                setError("");
+                if (
+                    mountedRef.current
+                ) {
+                    setRefreshingQR(
+                        true
+                    );
 
-                const response = await fetch(
-                    `${API_URL}/attendance-sessions/${sessionId}/qr`,
-                    {
-                        method: "GET",
-                        headers: {
-                            Authorization: `Bearer ${token}`,
-                            "Content-Type": "application/json",
-                        },
-                    }
+                    setError("");
+                }
+
+                console.log(
+                    "Requesting QR:",
+                    `${API_URL}/attendance-sessions/${sessionId}/qr`
                 );
 
+                const response =
+                    await fetch(
+                        `${API_URL}/attendance-sessions/${sessionId}/qr`,
+                        {
+                            method: "GET",
+
+                            headers: {
+                                Authorization: `Bearer ${token}`,
+                                "Content-Type":
+                                    "application/json",
+                            },
+                        }
+                    );
+
                 const data =
-                    await getResponseData(response);
+                    await getResponseData(
+                        response
+                    );
+
+                console.log(
+                    "Refresh QR HTTP status:",
+                    response.status
+                );
 
                 console.log(
                     "Refresh QR response:",
@@ -289,19 +561,25 @@ const StartAttendance = () => {
                 if (!response.ok) {
                     throw new Error(
                         data.message ||
-                            "Failed to refresh QR"
+                            "Failed to refresh QR."
                     );
                 }
 
                 // ==================================================
-                // BACKEND QR RESPONSE
+                // EXTRACT QR
                 // ==================================================
 
                 const qr =
-                    data.qr_image ||
-                    data.qrImage ||
-                    data.qr ||
-                    "";
+                    extractQRImage(
+                        data
+                    );
+
+                console.log(
+                    "Extracted QR image:",
+                    qr
+                        ? `FOUND (${qr.length} characters)`
+                        : "NOT FOUND"
+                );
 
                 if (!qr) {
                     console.error(
@@ -314,12 +592,12 @@ const StartAttendance = () => {
                     );
                 }
 
-                if (!mountedRef.current) {
+                if (
+                    !mountedRef.current
+                ) {
                     return;
                 }
 
-                // Make sure this response still belongs to
-                // the currently active session.
                 const latestSession =
                     sessionRef.current;
 
@@ -327,7 +605,8 @@ const StartAttendance = () => {
                     latestSession &&
                     Number(
                         latestSession.session_id
-                    ) !== Number(sessionId)
+                    ) !==
+                        Number(sessionId)
                 ) {
                     console.log(
                         "Ignoring QR response for old session:",
@@ -340,78 +619,77 @@ const StartAttendance = () => {
                 setQrImage(qr);
 
                 // ==================================================
-                // QR EXPIRATION
+                // EXPIRATION
                 // ==================================================
 
-                const expiresAt =
-                    data.qr_expires_at ||
-                    data.expires_at ||
-                    data.qrExpiresAt ||
-                    null;
+                let expiresAt =
+                    extractQRExpiry(
+                        data,
+                        latestSession
+                    );
 
-                if (expiresAt) {
-                    const seconds =
-                        calculateTimeLeft(
-                            expiresAt
+                if (!expiresAt) {
+                    const fallbackExpiry =
+                        new Date(
+                            Date.now() +
+                                QR_EXPIRY_SECONDS *
+                                    1000
                         );
 
-                    setTimeLeft(seconds);
+                    expiresAt =
+                        fallbackExpiry.toISOString();
+                }
 
-                    startCountdown(
+                const seconds =
+                    calculateTimeLeft(
                         expiresAt
                     );
 
-                    scheduleQRRefresh(
-                        expiresAt,
-                        sessionId
-                    );
-                } else {
-                    // Backend normally returns qr_expires_at.
-                    // Fallback to 15 seconds only if it doesn't.
-                    const fallbackExpiry =
-                        Date.now() + 15000;
+                setTimeLeft(
+                    seconds
+                );
 
-                    const fallbackDate =
-                        new Date(
-                            fallbackExpiry
-                        ).toISOString();
+                startCountdown(
+                    expiresAt
+                );
 
-                    setTimeLeft(15);
-
-                    startCountdown(
-                        fallbackDate
-                    );
-
-                    scheduleQRRefresh(
-                        fallbackDate,
-                        sessionId
-                    );
-                }
+                scheduleQRRefresh(
+                    expiresAt,
+                    sessionId
+                );
             } catch (err) {
                 console.error(
                     "Refresh QR error:",
                     err
                 );
 
-                if (mountedRef.current) {
+                if (
+                    mountedRef.current
+                ) {
                     setQrImage("");
 
                     setError(
                         err.message ||
-                            "Failed to refresh QR"
+                            "Failed to refresh QR."
                     );
                 }
             } finally {
                 refreshInProgress.current =
                     false;
 
-                if (mountedRef.current) {
-                    setRefreshingQR(false);
+                if (
+                    mountedRef.current
+                ) {
+                    setRefreshingQR(
+                        false
+                    );
                 }
             }
         },
         [
             calculateTimeLeft,
+            extractQRImage,
+            extractQRExpiry,
             scheduleQRRefresh,
             startCountdown,
             token,
@@ -422,275 +700,305 @@ const StartAttendance = () => {
     // FETCH STAFF SUBJECTS
     // ======================================================
 
-    const fetchSubjects = useCallback(async () => {
-        try {
-            setLoadingSubjects(true);
-            setError("");
-
-            if (!token) {
-                throw new Error(
-                    "Authentication token not found. Please login again."
-                );
-            }
-
-            const response = await fetch(
-                `${API_URL}/attendance-sessions/staff-subjects`,
-                {
-                    method: "GET",
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        "Content-Type": "application/json",
-                    },
-                }
-            );
-
-            const data =
-                await getResponseData(response);
-
-            console.log(
-                "Staff subjects response:",
-                data
-            );
-
-            if (!response.ok) {
-                throw new Error(
-                    data.message ||
-                        "Failed to load subjects"
-                );
-            }
-
-            const allocationList =
-                Array.isArray(data.subjects)
-                    ? data.subjects
-                    : Array.isArray(
-                          data.allocations
-                      )
-                    ? data.allocations
-                    : [];
-
-            setSubjects(allocationList);
-
-            return allocationList;
-        } catch (err) {
-            console.error(
-                "Fetch subjects error:",
-                err
-            );
-
-            setError(
-                err.message ||
-                    "Failed to load subjects"
-            );
-
-            return [];
-        } finally {
-            if (mountedRef.current) {
-                setLoadingSubjects(false);
-            }
-        }
-    }, [token]);
-
-    // ======================================================
-    // CHECK ACTIVE SESSION
-    // ======================================================
-
-    const fetchActiveSession = useCallback(
-        async (allocationList = []) => {
+    const fetchSubjects =
+        useCallback(async () => {
             try {
+                setLoadingSubjects(
+                    true
+                );
+
+                setError("");
+
                 if (!token) {
-                    return;
+                    throw new Error(
+                        "Authentication token not found. Please login again."
+                    );
                 }
 
-                const response = await fetch(
-                    `${API_URL}/attendance-sessions/active`,
-                    {
-                        method: "GET",
-                        headers: {
-                            Authorization: `Bearer ${token}`,
-                            "Content-Type": "application/json",
-                        },
-                    }
-                );
+                const response =
+                    await fetch(
+                        `${API_URL}/attendance-sessions/staff-subjects`,
+                        {
+                            method: "GET",
+
+                            headers: {
+                                Authorization: `Bearer ${token}`,
+                                "Content-Type":
+                                    "application/json",
+                            },
+                        }
+                    );
 
                 const data =
-                    await getResponseData(response);
+                    await getResponseData(
+                        response
+                    );
 
                 console.log(
-                    "Active session response:",
+                    "Staff subjects response:",
                     data
                 );
 
                 if (!response.ok) {
                     throw new Error(
                         data.message ||
-                            "Failed to load active session"
+                            "Failed to load subjects."
                     );
                 }
 
-                // ==================================================
-                // SUPPORT BOTH BACKEND FORMATS
-                // ==================================================
+                const allocationList =
+                    Array.isArray(
+                        data.subjects
+                    )
+                        ? data.subjects
+                        : Array.isArray(
+                              data.allocations
+                          )
+                        ? data.allocations
+                        : [];
 
-                let activeSession = null;
+                setSubjects(
+                    allocationList
+                );
+
+                return allocationList;
+            } catch (err) {
+                console.error(
+                    "Fetch subjects error:",
+                    err
+                );
 
                 if (
-                    data.session &&
-                    typeof data.session ===
-                        "object"
+                    mountedRef.current
                 ) {
-                    activeSession =
-                        data.session;
-                } else if (
-                    Array.isArray(
-                        data.sessions
-                    ) &&
-                    data.sessions.length > 0
+                    setError(
+                        err.message ||
+                            "Failed to load subjects."
+                    );
+                }
+
+                return [];
+            } finally {
+                if (
+                    mountedRef.current
                 ) {
-                    activeSession =
-                        data.sessions[0];
-                }
-
-                // No active session
-                if (!activeSession) {
-                    console.log(
-                        "No active attendance session found."
+                    setLoadingSubjects(
+                        false
                     );
-
-                    return;
                 }
+            }
+        }, [token]);
 
-                console.log(
-                    "Active attendance session:",
-                    activeSession
-                );
+    // ======================================================
+    // CHECK ACTIVE SESSION
+    // ======================================================
 
-                if (!mountedRef.current) {
-                    return;
-                }
+    const fetchActiveSession =
+        useCallback(
+            async (
+                allocationList = []
+            ) => {
+                try {
+                    if (!token) {
+                        return;
+                    }
 
-                // ==================================================
-                // SET SESSION
-                // ==================================================
+                    const response =
+                        await fetch(
+                            `${API_URL}/attendance-sessions/active`,
+                            {
+                                method: "GET",
 
-                sessionRef.current =
-                    activeSession;
-
-                setSession(
-                    activeSession
-                );
-
-                // ==================================================
-                // SELECT ALLOCATION
-                // ==================================================
-
-                const activeAllocationId =
-                    activeSession.allocation_id ||
-                    activeSession.subject_allocation_id;
-
-                if (activeAllocationId) {
-                    setSelectedAllocation(
-                        String(
-                            activeAllocationId
-                        )
-                    );
-                } else {
-                    const matchingAllocation =
-                        allocationList.find(
-                            (item) =>
-                                Number(
-                                    item.subject_id
-                                ) ===
-                                Number(
-                                    activeSession.subject_id
-                                )
+                                headers: {
+                                    Authorization: `Bearer ${token}`,
+                                    "Content-Type":
+                                        "application/json",
+                                },
+                            }
                         );
 
+                    const data =
+                        await getResponseData(
+                            response
+                        );
+
+                    console.log(
+                        "Active session response:",
+                        data
+                    );
+
+                    if (!response.ok) {
+                        throw new Error(
+                            data.message ||
+                                "Failed to load active session."
+                        );
+                    }
+
+                    let activeSession =
+                        null;
+
                     if (
-                        matchingAllocation
+                        data.session &&
+                        typeof data.session ===
+                            "object"
+                    ) {
+                        activeSession =
+                            data.session;
+                    } else if (
+                        Array.isArray(
+                            data.sessions
+                        ) &&
+                        data.sessions
+                            .length >
+                            0
+                    ) {
+                        activeSession =
+                            data.sessions[0];
+                    }
+
+                    if (!activeSession) {
+                        console.log(
+                            "No active attendance session found."
+                        );
+
+                        return;
+                    }
+
+                    console.log(
+                        "Active attendance session:",
+                        activeSession
+                    );
+
+                    if (
+                        !mountedRef.current
+                    ) {
+                        return;
+                    }
+
+                    sessionRef.current =
+                        activeSession;
+
+                    setSession(
+                        activeSession
+                    );
+
+                    const activeAllocationId =
+                        activeSession.allocation_id ||
+                        activeSession.subject_allocation_id;
+
+                    if (
+                        activeAllocationId
                     ) {
                         setSelectedAllocation(
                             String(
-                                matchingAllocation.allocation_id
+                                activeAllocationId
                             )
                         );
+                    } else {
+                        const matchingAllocation =
+                            allocationList.find(
+                                (item) =>
+                                    Number(
+                                        item.subject_id
+                                    ) ===
+                                    Number(
+                                        activeSession.subject_id
+                                    )
+                            );
+
+                        if (
+                            matchingAllocation
+                        ) {
+                            setSelectedAllocation(
+                                String(
+                                    matchingAllocation.allocation_id
+                                )
+                            );
+                        }
                     }
+
+                    setQrImage("");
+
+                    await refreshQR(
+                        activeSession.session_id
+                    );
+                } catch (err) {
+                    console.error(
+                        "Active session error:",
+                        err
+                    );
                 }
-
-                // ==================================================
-                // LOAD EXISTING QR
-                // ==================================================
-
-                setQrImage("");
-
-                await refreshQR(
-                    activeSession.session_id
-                );
-            } catch (err) {
-                console.error(
-                    "Active session error:",
-                    err
-                );
-            }
-        },
-        [refreshQR, token]
-    );
+            },
+            [refreshQR, token]
+        );
 
     // ======================================================
     // INITIAL LOAD
     // ======================================================
 
     useEffect(() => {
-        mountedRef.current = true;
+        mountedRef.current =
+            true;
 
         if (!token) {
             setError(
                 "Authentication token not found. Please login again."
             );
 
-            setLoadingSubjects(false);
+            setLoadingSubjects(
+                false
+            );
 
             return () => {
-                mountedRef.current = false;
+                mountedRef.current =
+                    false;
+
                 clearQRTimers();
             };
         }
 
-        // React StrictMode can execute effects twice
-        // during development. This prevents duplicate
-        // API calls from the same mounted component.
-        if (initialLoadStarted.current) {
+        if (
+            initialLoadStarted.current
+        ) {
             return () => {
-                mountedRef.current = false;
+                mountedRef.current =
+                    false;
+
                 clearQRTimers();
             };
         }
 
-        initialLoadStarted.current = true;
+        initialLoadStarted.current =
+            true;
 
-        const loadData = async () => {
-            try {
-                const allocationList =
-                    await fetchSubjects();
+        const loadData =
+            async () => {
+                try {
+                    const allocationList =
+                        await fetchSubjects();
 
-                if (!mountedRef.current) {
-                    return;
+                    if (
+                        !mountedRef.current
+                    ) {
+                        return;
+                    }
+
+                    await fetchActiveSession(
+                        allocationList
+                    );
+                } catch (err) {
+                    console.error(
+                        "Initial attendance page load error:",
+                        err
+                    );
                 }
-
-                await fetchActiveSession(
-                    allocationList
-                );
-            } catch (err) {
-                console.error(
-                    "Initial attendance page load error:",
-                    err
-                );
-            }
-        };
+            };
 
         loadData();
 
         return () => {
-            mountedRef.current = false;
+            mountedRef.current =
+                false;
 
             clearQRTimers();
         };
@@ -705,155 +1013,170 @@ const StartAttendance = () => {
     // START SESSION
     // ======================================================
 
-    const startSession = async () => {
-        if (!selectedAllocation) {
-            setError(
-                "Please select a subject."
-            );
-            return;
-        }
-
-        if (startingRef.current) {
-            console.log(
-                "Start session already in progress."
-            );
-            return;
-        }
-
-        if (sessionRef.current) {
-            setError(
-                "An attendance session is already active."
-            );
-            return;
-        }
-
-        try {
-            startingRef.current = true;
-
-            setStarting(true);
-            setError("");
-            setMessage("");
-
-            // --------------------------------------------------
-            // Find selected allocation
-            // --------------------------------------------------
-
-            const allocation =
-                subjects.find(
-                    (item) =>
-                        Number(
-                            item.allocation_id
-                        ) ===
-                        Number(
-                            selectedAllocation
-                        )
+    const startSession =
+        async () => {
+            if (
+                !selectedAllocation
+            ) {
+                setError(
+                    "Please select a subject."
                 );
 
-            if (!allocation) {
-                throw new Error(
-                    "Subject allocation not found."
-                );
+                return;
             }
 
-            console.log(
-                "Selected allocation:",
-                allocation
-            );
+            if (
+                startingRef.current
+            ) {
+                return;
+            }
 
-            // --------------------------------------------------
-            // Start attendance session
-            // --------------------------------------------------
+            if (
+                sessionRef.current
+            ) {
+                setError(
+                    "An attendance session is already active."
+                );
 
-            const response = await fetch(
-                `${API_URL}/attendance-sessions`,
-                {
-                    method: "POST",
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        "Content-Type":
-                            "application/json",
-                    },
-                    body: JSON.stringify({
-                        allocation_id:
-                            allocation.allocation_id,
+                return;
+            }
 
-                        subject_id:
-                            allocation.subject_id,
-                    }),
+            try {
+                startingRef.current =
+                    true;
+
+                setStarting(true);
+                setError("");
+                setMessage("");
+
+                const allocation =
+                    subjects.find(
+                        (item) =>
+                            Number(
+                                item.allocation_id
+                            ) ===
+                            Number(
+                                selectedAllocation
+                            )
+                    );
+
+                if (!allocation) {
+                    throw new Error(
+                        "Subject allocation not found."
+                    );
                 }
-            );
 
-            const data =
-                await getResponseData(
-                    response
+                console.log(
+                    "Selected allocation:",
+                    allocation
                 );
 
-            console.log(
-                "Start attendance response:",
-                data
-            );
+                const response =
+                    await fetch(
+                        `${API_URL}/attendance-sessions`,
+                        {
+                            method: "POST",
 
-            if (!response.ok) {
-                throw new Error(
-                    data.message ||
-                        "Failed to start attendance"
+                            headers: {
+                                Authorization: `Bearer ${token}`,
+                                "Content-Type":
+                                    "application/json",
+                            },
+
+                            body: JSON.stringify(
+                                {
+                                    allocation_id:
+                                        allocation.allocation_id,
+
+                                    subject_id:
+                                        allocation.subject_id,
+                                }
+                            ),
+                        }
+                    );
+
+                const data =
+                    await getResponseData(
+                        response
+                    );
+
+                console.log(
+                    "Start attendance response:",
+                    data
                 );
-            }
 
-            // ==================================================
-            // SUPPORT NORMAL AND EXISTING SESSION RESPONSE
-            // ==================================================
+                if (!response.ok) {
+                    throw new Error(
+                        data.message ||
+                            "Failed to start attendance."
+                    );
+                }
 
-            const newSession =
-                data.session ||
-                null;
+                const newSession =
+                    data.session ||
+                    data.data?.session ||
+                    null;
 
-            if (!newSession) {
-                throw new Error(
-                    "Attendance session was created but session data was not returned."
+                if (!newSession) {
+                    throw new Error(
+                        "Attendance session was created but session data was not returned."
+                    );
+                }
+
+                clearQRTimers();
+
+                sessionRef.current =
+                    newSession;
+
+                setSession(
+                    newSession
                 );
-            }
 
-            // Clear any old timers first
-            clearQRTimers();
+                setQrImage("");
+                setTimeLeft(0);
 
-            // Store session in ref immediately
-            sessionRef.current =
-                newSession;
+                // ==================================================
+                // USE QR RETURNED BY POST RESPONSE
+                // ==================================================
 
-            setSession(newSession);
+                const returnedQR =
+                    extractQRImage(
+                        data
+                    );
 
-            setQrImage("");
+                const returnedExpiry =
+                    extractQRExpiry(
+                        data,
+                        newSession
+                    );
 
-            setTimeLeft(0);
-
-            // ==================================================
-            // USE QR RETURNED BY START API IF AVAILABLE
-            // ==================================================
-
-            const returnedQR =
-                data.qr_image ||
-                data.qrImage ||
-                data.qr ||
-                data.qr_code ||
-                "";
-
-            const returnedExpiry =
-                data.qr_expires_at ||
-                data.expires_at ||
-                data.qrExpiresAt ||
-                newSession.qr_expires_at ||
-                null;
-
-            if (returnedQR) {
-                setQrImage(
+                console.log(
+                    "Returned QR from start API:",
                     returnedQR
+                        ? "FOUND"
+                        : "NOT FOUND"
                 );
 
-                if (returnedExpiry) {
+                if (returnedQR) {
+                    setQrImage(
+                        returnedQR
+                    );
+
+                    let expiry =
+                        returnedExpiry;
+
+                    if (!expiry) {
+                        expiry =
+                            new Date(
+                                Date.now() +
+                                    QR_EXPIRY_SECONDS *
+                                        1000
+                            ).toISOString();
+                    }
+
                     const seconds =
                         calculateTimeLeft(
-                            returnedExpiry
+                            expiry
                         );
 
                     setTimeLeft(
@@ -861,196 +1184,195 @@ const StartAttendance = () => {
                     );
 
                     startCountdown(
-                        returnedExpiry
+                        expiry
                     );
 
                     scheduleQRRefresh(
-                        returnedExpiry,
+                        expiry,
                         newSession.session_id
                     );
                 } else {
-                    const fallbackExpiry =
-                        new Date(
-                            Date.now() +
-                                15000
-                        ).toISOString();
+                    // ==================================================
+                    // FALLBACK TO QR ENDPOINT
+                    // ==================================================
 
-                    setTimeLeft(15);
-
-                    startCountdown(
-                        fallbackExpiry
-                    );
-
-                    scheduleQRRefresh(
-                        fallbackExpiry,
+                    await refreshQR(
                         newSession.session_id
                     );
                 }
-            } else {
-                // ==================================================
-                // FALLBACK: REQUEST QR FROM QR ENDPOINT
-                // ==================================================
 
-                await refreshQR(
-                    newSession.session_id
+                if (
+                    data.existing
+                ) {
+                    setMessage(
+                        "The existing active attendance session has been loaded."
+                    );
+                } else {
+                    setMessage(
+                        "Attendance session started successfully."
+                    );
+                }
+            } catch (err) {
+                console.error(
+                    "Start session error:",
+                    err
                 );
+
+                if (
+                    mountedRef.current
+                ) {
+                    setError(
+                        err.message ||
+                            "Failed to start attendance."
+                    );
+                }
+            } finally {
+                startingRef.current =
+                    false;
+
+                if (
+                    mountedRef.current
+                ) {
+                    setStarting(
+                        false
+                    );
+                }
             }
-
-            // ==================================================
-            // SUCCESS MESSAGE
-            // ==================================================
-
-            if (data.existing) {
-                setMessage(
-                    "The existing active attendance session has been loaded."
-                );
-            } else {
-                setMessage(
-                    "Attendance session started successfully."
-                );
-            }
-        } catch (err) {
-            console.error(
-                "Start session error:",
-                err
-            );
-
-            setError(
-                err.message ||
-                    "Failed to start attendance"
-            );
-        } finally {
-            startingRef.current =
-                false;
-
-            if (mountedRef.current) {
-                setStarting(false);
-            }
-        }
-    };
+        };
 
     // ======================================================
     // CLOSE SESSION
     // ======================================================
 
-    const closeSession = async () => {
-        const currentSession =
-            sessionRef.current;
+    const closeSession =
+        async () => {
+            const currentSession =
+                sessionRef.current;
 
-        if (!currentSession) {
-            return;
-        }
-
-        if (closingRef.current) {
-            return;
-        }
-
-        const confirmed =
-            window.confirm(
-                "Are you sure you want to close this attendance session?"
-            );
-
-        if (!confirmed) {
-            return;
-        }
-
-        try {
-            closingRef.current = true;
-
-            setClosing(true);
-            setError("");
-            setMessage("");
-
-            // Stop QR refresh immediately
-            clearQRTimers();
-
-            const response = await fetch(
-                `${API_URL}/attendance-sessions/${currentSession.session_id}/close`,
-                {
-                    method: "PATCH",
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
-
-            const data =
-                await getResponseData(
-                    response
-                );
-
-            console.log(
-                "Close session response:",
-                data
-            );
-
-            if (!response.ok) {
-                throw new Error(
-                    data.message ||
-                        "Failed to close session"
-                );
+            if (!currentSession) {
+                return;
             }
 
-            // ==================================================
-            // CLEAR SESSION
-            // ==================================================
+            if (
+                closingRef.current
+            ) {
+                return;
+            }
 
-            sessionRef.current = null;
+            const confirmed =
+                window.confirm(
+                    "Are you sure you want to close this attendance session?"
+                );
 
-            setSession(null);
-            setQrImage("");
-            setTimeLeft(0);
-            setSelectedAllocation("");
+            if (!confirmed) {
+                return;
+            }
 
-            setMessage(
-                data.message ||
-                    "Attendance session closed successfully."
-            );
-        } catch (err) {
-            console.error(
-                "Close session error:",
-                err
-            );
+            try {
+                closingRef.current =
+                    true;
 
-            // If closing failed, keep the session active
-            if (currentSession) {
+                setClosing(true);
+                setError("");
+                setMessage("");
+
+                clearQRTimers();
+
+                const response =
+                    await fetch(
+                        `${API_URL}/attendance-sessions/${currentSession.session_id}/close`,
+                        {
+                            method: "PATCH",
+
+                            headers: {
+                                Authorization: `Bearer ${token}`,
+                                "Content-Type":
+                                    "application/json",
+                            },
+                        }
+                    );
+
+                const data =
+                    await getResponseData(
+                        response
+                    );
+
+                console.log(
+                    "Close session response:",
+                    data
+                );
+
+                if (!response.ok) {
+                    throw new Error(
+                        data.message ||
+                            "Failed to close session."
+                    );
+                }
+
                 sessionRef.current =
-                    currentSession;
+                    null;
 
-                setSession(
-                    currentSession
+                setSession(null);
+                setQrImage("");
+                setTimeLeft(0);
+
+                setSelectedAllocation(
+                    ""
                 );
 
-                // Try to restore QR timer
+                setMessage(
+                    data.message ||
+                        "Attendance session closed successfully."
+                );
+            } catch (err) {
+                console.error(
+                    "Close session error:",
+                    err
+                );
+
                 if (
-                    currentSession.qr_expires_at
+                    currentSession
                 ) {
-                    scheduleQRRefresh(
-                        currentSession.qr_expires_at,
-                        currentSession.session_id
+                    sessionRef.current =
+                        currentSession;
+
+                    setSession(
+                        currentSession
                     );
 
-                    startCountdown(
+                    if (
                         currentSession.qr_expires_at
-                    );
+                    ) {
+                        scheduleQRRefresh(
+                            currentSession.qr_expires_at,
+                            currentSession.session_id
+                        );
+
+                        startCountdown(
+                            currentSession.qr_expires_at
+                        );
+                    } else {
+                        refreshQR(
+                            currentSession.session_id
+                        );
+                    }
+                }
+
+                setError(
+                    err.message ||
+                        "Failed to close session."
+                );
+            } finally {
+                closingRef.current =
+                    false;
+
+                if (
+                    mountedRef.current
+                ) {
+                    setClosing(false);
                 }
             }
-
-            setError(
-                err.message ||
-                    "Failed to close session"
-            );
-        } finally {
-            closingRef.current =
-                false;
-
-            if (mountedRef.current) {
-                setClosing(false);
-            }
-        }
-    };
+        };
 
     // ======================================================
     // MANUAL QR REFRESH
@@ -1058,14 +1380,15 @@ const StartAttendance = () => {
 
     const handleManualRefreshQR =
         async () => {
-            if (!sessionRef.current) {
+            if (
+                !sessionRef.current
+            ) {
                 return;
             }
 
-            // Clear the existing scheduled refresh.
-            // refreshQR() will create a new timer using
-            // the new QR expiration returned by backend.
-            if (qrRefreshTimerRef.current) {
+            if (
+                qrRefreshTimerRef.current
+            ) {
                 clearTimeout(
                     qrRefreshTimerRef.current
                 );
@@ -1075,7 +1398,8 @@ const StartAttendance = () => {
             }
 
             await refreshQR(
-                sessionRef.current.session_id
+                sessionRef.current
+                    .session_id
             );
         };
 
@@ -1083,14 +1407,19 @@ const StartAttendance = () => {
     // FORMAT TIMER
     // ======================================================
 
-    const formatTime = (seconds) => {
+    const formatTime = (
+        seconds
+    ) => {
         return `${String(
-            Math.max(0, seconds)
+            Math.max(
+                0,
+                seconds
+            )
         ).padStart(2, "0")}s`;
     };
 
     // ======================================================
-    // GET DISPLAY SUBJECT
+    // SELECTED SUBJECT
     // ======================================================
 
     const selectedSubjectData =
@@ -1235,7 +1564,9 @@ const StartAttendance = () => {
                                     e.target.value
                                 )
                             }
-                            disabled={!!session}
+                            disabled={
+                                !!session
+                            }
                             className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
                         >
                             <option value="">
@@ -1243,7 +1574,9 @@ const StartAttendance = () => {
                             </option>
 
                             {subjects.map(
-                                (subject) => (
+                                (
+                                    subject
+                                ) => (
                                     <option
                                         key={
                                             subject.allocation_id
@@ -1263,8 +1596,6 @@ const StartAttendance = () => {
                                 )
                             )}
                         </select>
-
-                        {/* Selected allocation information */}
 
                         {selectedSubjectData &&
                             !session && (
@@ -1303,10 +1634,6 @@ const StartAttendance = () => {
                                 staff account.
                             </p>
                         )}
-
-                        {/* ==================================================
-                            START / CLOSE BUTTON
-                        ================================================== */}
 
                         {!session ? (
                             <button
@@ -1359,8 +1686,6 @@ const StartAttendance = () => {
 
                             <div className="space-y-4">
 
-                                {/* Subject */}
-
                                 <div>
                                     <p className="text-xs text-slate-500">
                                         Subject
@@ -1379,8 +1704,6 @@ const StartAttendance = () => {
                                     </p>
                                 </div>
 
-                                {/* Allocation */}
-
                                 {(session.allocation_id ||
                                     selectedAllocation) && (
                                     <div>
@@ -1395,8 +1718,6 @@ const StartAttendance = () => {
                                     </div>
                                 )}
 
-                                {/* Session ID */}
-
                                 <div>
                                     <p className="text-xs text-slate-500">
                                         Session ID
@@ -1409,8 +1730,6 @@ const StartAttendance = () => {
                                         }
                                     </p>
                                 </div>
-
-                                {/* Date */}
 
                                 {session.session_date && (
                                     <div>
@@ -1426,8 +1745,6 @@ const StartAttendance = () => {
                                     </div>
                                 )}
 
-                                {/* Start time */}
-
                                 {session.start_time && (
                                     <div>
                                         <p className="text-xs text-slate-500">
@@ -1441,8 +1758,6 @@ const StartAttendance = () => {
                                         </p>
                                     </div>
                                 )}
-
-                                {/* Status */}
 
                                 <div>
                                     <p className="text-xs text-slate-500">
@@ -1468,10 +1783,6 @@ const StartAttendance = () => {
 
                     <div className="flex min-h-96 flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
 
-                        {/* ==================================================
-                            NO ACTIVE SESSION
-                        ================================================== */}
-
                         {!session ? (
                             <div className="max-w-md text-center">
 
@@ -1492,11 +1803,6 @@ const StartAttendance = () => {
 
                             </div>
                         ) : (
-
-                            /* ==================================================
-                               ACTIVE SESSION
-                            ================================================== */
-
                             <div className="w-full max-w-md text-center">
 
                                 {/* ==================================================
@@ -1536,6 +1842,20 @@ const StartAttendance = () => {
                                             }
                                             alt="Attendance QR Code"
                                             className="h-64 w-64 object-contain"
+                                            onError={(
+                                                event
+                                            ) => {
+                                                console.error(
+                                                    "QR image failed to render."
+                                                );
+
+                                                event.currentTarget.style.display =
+                                                    "none";
+
+                                                setError(
+                                                    "QR image could not be displayed. Please refresh the QR code."
+                                                );
+                                            }}
                                         />
                                     ) : (
                                         <div className="flex h-64 w-64 flex-col items-center justify-center">
@@ -1578,7 +1898,7 @@ const StartAttendance = () => {
                                 </div>
 
                                 {/* ==================================================
-                                    REFRESH BUTTON
+                                    MANUAL REFRESH
                                 ================================================== */}
 
                                 <button
