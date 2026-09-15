@@ -1,89 +1,137 @@
+
 const express = require("express");
 
+const router = express.Router();
+
 const {
-    getAttendanceSessions,
-    getAttendanceSessionById,
+    authenticateToken,
+    authorizeRoles,
+} = require("../middleware/authMiddleware");
+
+const {
     getStaffSubjects,
     getStaffTimetable,
     getActiveSession,
+    getAttendanceSessions,
+    getAttendanceSessionById,
     createAttendanceSession,
     getAttendanceSessionQR,
     updateAttendanceSession,
     closeAttendanceSession,
-    deleteAttendanceSession
+    deleteAttendanceSession,
 } = require("../controllers/attendanceSessionController");
 
-const authenticateToken =
-    require("../middleware/authMiddleware");
+// =====================================================
+// ATTENDANCE SESSION ROUTES
+// =====================================================
+//
+// BASE URL:
+//
+// /api/attendance-sessions
+//
+// IMPORTANT ROUTES:
+//
+// GET  /api/attendance-sessions/staff-subjects
+// GET  /api/attendance-sessions/staff-timetable
+// GET  /api/attendance-sessions/active
+//
+// GET  /api/attendance-sessions
+// POST /api/attendance-sessions
+// GET  /api/attendance-sessions/:id
+// GET  /api/attendance-sessions/:id/qr
+// PATCH /api/attendance-sessions/:id/close
+// PUT /api/attendance-sessions/:id
+// DELETE /api/attendance-sessions/:id
+//
+// =====================================================
 
-const authorizeRoles =
-    require("../middleware/roleMiddleware");
-
-const router = express.Router();
 
 // =====================================================
-// GET STAFF SUBJECTS
+// STAFF SUBJECTS
+// =====================================================
+//
+// Main endpoint:
 //
 // GET /api/attendance-sessions/staff-subjects
 //
-// STAFF / TEACHER
 // =====================================================
 
 router.get(
     "/staff-subjects",
     authenticateToken,
-    authorizeRoles(
-        "STAFF",
-        "TEACHER"
-    ),
+    authorizeRoles("STAFF", "TEACHER"),
     getStaffSubjects
 );
 
+
 // =====================================================
-// GET STAFF TIMETABLE
+// STAFF SUBJECT ALLOCATIONS
+// =====================================================
+//
+// COMPATIBILITY ENDPOINT
+//
+// Some frontend code calls:
+//
+// GET /api/allocations/staff
+//
+// If this router is mounted only at:
+//
+// /api/attendance-sessions
+//
+// this route becomes:
+//
+// /api/attendance-sessions/allocations/staff
+//
+// Therefore this route alone CANNOT create
+// /api/allocations/staff.
+//
+// The actual /api/allocations/staff compatibility
+// route is handled in server.js below.
+// =====================================================
+
+
+// =====================================================
+// STAFF TIMETABLE
+// =====================================================
 //
 // GET /api/attendance-sessions/staff-timetable
 //
-// STAFF / TEACHER
-//
-// IMPORTANT:
-// This route must be BEFORE /:id.
 // =====================================================
 
 router.get(
     "/staff-timetable",
     authenticateToken,
-    authorizeRoles(
-        "STAFF",
-        "TEACHER"
-    ),
+    authorizeRoles("STAFF", "TEACHER"),
     getStaffTimetable
 );
 
+
 // =====================================================
-// GET ACTIVE SESSION
+// ACTIVE SESSION
+// =====================================================
+//
+// IMPORTANT:
+//
+// This route MUST appear before /:id.
 //
 // GET /api/attendance-sessions/active
 //
-// STAFF / TEACHER
 // =====================================================
 
 router.get(
     "/active",
     authenticateToken,
-    authorizeRoles(
-        "STAFF",
-        "TEACHER"
-    ),
+    authorizeRoles("STAFF", "TEACHER"),
     getActiveSession
 );
 
+
 // =====================================================
-// GET ALL SESSIONS
+// ALL ATTENDANCE SESSIONS
+// =====================================================
 //
 // GET /api/attendance-sessions
 //
-// ADMIN / HOD / STAFF / TEACHER
 // =====================================================
 
 router.get(
@@ -98,12 +146,13 @@ router.get(
     getAttendanceSessions
 );
 
+
 // =====================================================
-// CREATE SESSION
+// CREATE ATTENDANCE SESSION
+// =====================================================
 //
 // POST /api/attendance-sessions
 //
-// STAFF / TEACHER / ADMIN
 // =====================================================
 
 router.post(
@@ -117,13 +166,13 @@ router.post(
     createAttendanceSession
 );
 
+
 // =====================================================
-// GET QR
+// GET SESSION QR
+// =====================================================
 //
 // GET /api/attendance-sessions/:id/qr
 //
-// IMPORTANT:
-// This route must be BEFORE /:id
 // =====================================================
 
 router.get(
@@ -137,13 +186,16 @@ router.get(
     getAttendanceSessionQR
 );
 
+
 // =====================================================
 // CLOSE SESSION
+// =====================================================
 //
 // PATCH /api/attendance-sessions/:id/close
 //
-// IMPORTANT:
-// This route must be BEFORE generic /:id
+// This also automatically creates ABSENT records
+// for eligible students who did not attend.
+//
 // =====================================================
 
 router.patch(
@@ -157,10 +209,13 @@ router.patch(
     closeAttendanceSession
 );
 
+
 // =====================================================
 // UPDATE SESSION
+// =====================================================
 //
 // PUT /api/attendance-sessions/:id
+//
 // =====================================================
 
 router.put(
@@ -174,30 +229,33 @@ router.put(
     updateAttendanceSession
 );
 
+
 // =====================================================
 // DELETE SESSION
+// =====================================================
 //
 // DELETE /api/attendance-sessions/:id
 //
-// ADMIN ONLY
 // =====================================================
 
 router.delete(
     "/:id",
     authenticateToken,
-    authorizeRoles(
-        "ADMIN"
-    ),
+    authorizeRoles("ADMIN"),
     deleteAttendanceSession
 );
 
+
 // =====================================================
 // GET SESSION BY ID
+// =====================================================
+//
+// IMPORTANT:
+//
+// This MUST be the LAST GET route.
 //
 // GET /api/attendance-sessions/:id
 //
-// IMPORTANT:
-// Keep this LAST.
 // =====================================================
 
 router.get(
@@ -211,5 +269,10 @@ router.get(
     ),
     getAttendanceSessionById
 );
+
+
+// =====================================================
+// EXPORT
+// =====================================================
 
 module.exports = router;
