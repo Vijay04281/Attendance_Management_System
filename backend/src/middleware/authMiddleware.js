@@ -1,3 +1,4 @@
+
 // =====================================================
 // authMiddleware.js
 // Attendance Management System
@@ -11,9 +12,24 @@ const jwt = require("jsonwebtoken");
 
 const authenticateToken = (req, res, next) => {
     try {
-        // -------------------------------------------------
-        // Get Authorization Header
-        // -------------------------------------------------
+        // =================================================
+        // IMPORTANT:
+        // Allow CORS preflight requests.
+        //
+        // Browser sends OPTIONS before requests such as:
+        // GET /api/attendance/my
+        //
+        // OPTIONS does NOT contain the JWT Authorization
+        // header, so it must not be rejected by JWT auth.
+        // =================================================
+
+        if (req.method === "OPTIONS") {
+            return next();
+        }
+
+        // =================================================
+        // GET AUTHORIZATION HEADER
+        // =================================================
 
         const authHeader = req.headers.authorization;
 
@@ -24,14 +40,18 @@ const authenticateToken = (req, res, next) => {
             });
         }
 
-        // -------------------------------------------------
-        // Expected format:
+        // =================================================
+        // EXPECTED FORMAT:
+        //
         // Authorization: Bearer TOKEN
-        // -------------------------------------------------
+        // =================================================
 
         const parts = authHeader.trim().split(/\s+/);
 
-        if (parts.length !== 2 || parts[0].toLowerCase() !== "bearer") {
+        if (
+            parts.length !== 2 ||
+            parts[0].toLowerCase() !== "bearer"
+        ) {
             return res.status(401).json({
                 success: false,
                 message: "Invalid authorization format",
@@ -47,42 +67,52 @@ const authenticateToken = (req, res, next) => {
             });
         }
 
-        // -------------------------------------------------
-        // Check JWT Secret
-        // -------------------------------------------------
+        // =================================================
+        // CHECK JWT SECRET
+        // =================================================
 
         if (!process.env.JWT_SECRET) {
-            console.error("JWT_SECRET is not configured");
+            console.error(
+                "JWT_SECRET is not configured"
+            );
 
             return res.status(500).json({
                 success: false,
-                message: "Authentication configuration error",
+                message:
+                    "Authentication configuration error",
             });
         }
 
-        // -------------------------------------------------
-        // Verify Token
-        // -------------------------------------------------
+        // =================================================
+        // VERIFY JWT
+        // =================================================
 
         const decoded = jwt.verify(
             token,
             process.env.JWT_SECRET
         );
 
-        // -------------------------------------------------
-        // Store decoded user information
-        // -------------------------------------------------
+        // =================================================
+        // STORE USER INFORMATION
+        // =================================================
 
         req.user = decoded;
 
-        // -------------------------------------------------
-        // Continue
-        // -------------------------------------------------
+        // =================================================
+        // CONTINUE
+        // =================================================
 
         next();
 
     } catch (error) {
-        console.error("Authentication error:", error.message);
+        console.error(
+            "Authentication error:",
+            error.message
+        );
+
+        // =================================================
+        // TOKEN EXPIRED
+        // =================================================
 
         if (error.name === "TokenExpiredError") {
             return res.status(401).json({
@@ -91,12 +121,20 @@ const authenticateToken = (req, res, next) => {
             });
         }
 
+        // =================================================
+        // INVALID JWT
+        // =================================================
+
         if (error.name === "JsonWebTokenError") {
             return res.status(403).json({
                 success: false,
                 message: "Invalid access token",
             });
         }
+
+        // =================================================
+        // OTHER AUTHENTICATION ERROR
+        // =================================================
 
         return res.status(403).json({
             success: false,
@@ -111,9 +149,9 @@ const authenticateToken = (req, res, next) => {
 //
 // Usage:
 //
-// authorizeRoles("ADMIN", "HOD")
+// authorizeRoles("ADMIN")
 //
-// or
+// authorizeRoles("ADMIN", "HOD")
 //
 // authorizeRoles(
 //     "ADMIN",
@@ -127,20 +165,21 @@ const authenticateToken = (req, res, next) => {
 const authorizeRoles = (...allowedRoles) => {
     return (req, res, next) => {
         try {
-            // -------------------------------------------------
-            // Authentication must happen first
-            // -------------------------------------------------
+            // =================================================
+            // AUTHENTICATION MUST HAPPEN FIRST
+            // =================================================
 
             if (!req.user) {
                 return res.status(401).json({
                     success: false,
-                    message: "Authentication required",
+                    message:
+                        "Authentication required",
                 });
             }
 
-            // -------------------------------------------------
-            // Get role from JWT
-            // -------------------------------------------------
+            // =================================================
+            // GET ROLE FROM JWT
+            // =================================================
 
             const userRole =
                 req.user.role ||
@@ -150,28 +189,34 @@ const authorizeRoles = (...allowedRoles) => {
             if (!userRole) {
                 return res.status(403).json({
                     success: false,
-                    message: "User role not found",
+                    message:
+                        "User role not found",
                 });
             }
 
-            // -------------------------------------------------
-            // Normalize roles
-            // -------------------------------------------------
+            // =================================================
+            // NORMALIZE USER ROLE
+            // =================================================
 
-            const normalizedUserRole = String(userRole)
-                .trim()
-                .toUpperCase();
+            const normalizedUserRole =
+                String(userRole)
+                    .trim()
+                    .toUpperCase();
 
-            const normalizedAllowedRoles = allowedRoles.map(
-                (role) =>
+            // =================================================
+            // NORMALIZE ALLOWED ROLES
+            // =================================================
+
+            const normalizedAllowedRoles =
+                allowedRoles.map((role) =>
                     String(role)
                         .trim()
                         .toUpperCase()
-            );
+                );
 
-            // -------------------------------------------------
-            // Check role
-            // -------------------------------------------------
+            // =================================================
+            // CHECK ROLE
+            // =================================================
 
             if (
                 !normalizedAllowedRoles.includes(
@@ -184,9 +229,9 @@ const authorizeRoles = (...allowedRoles) => {
                 });
             }
 
-            // -------------------------------------------------
-            // Continue
-            // -------------------------------------------------
+            // =================================================
+            // CONTINUE
+            // =================================================
 
             next();
 
@@ -208,24 +253,27 @@ const authorizeRoles = (...allowedRoles) => {
 // EXPORT
 // =====================================================
 //
-// IMPORTANT:
+// Supports:
 //
-// Export authenticateToken directly because existing
-// routes use:
+// const authMiddleware = require(
+//     "../middleware/authMiddleware"
+// );
 //
-// const authMiddleware = require("../middleware/authMiddleware");
-//
-// This also supports:
+// And:
 //
 // const {
 //     authenticateToken,
 //     authorizeRoles
-// } = require("../middleware/authMiddleware");
+// } = require(
+//     "../middleware/authMiddleware"
+// );
 //
 // =====================================================
 
 module.exports = authenticateToken;
 
-// Attach named properties for routes that use destructuring.
-module.exports.authenticateToken = authenticateToken;
-module.exports.authorizeRoles = authorizeRoles;
+module.exports.authenticateToken =
+    authenticateToken;
+
+module.exports.authorizeRoles =
+    authorizeRoles;
