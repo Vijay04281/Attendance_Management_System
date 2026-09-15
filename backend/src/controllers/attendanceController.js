@@ -1,11 +1,13 @@
-
 const db = require("../config/db");
 
 // =====================================================
 // ATTENDANCE CONTROLLER
+// =====================================================
 //
-// STUDENT TABLE ACTUAL STRUCTURE:
+// ACTUAL DATABASE STRUCTURE
 //
+// students
+// -----------------------------------------------------
 // student_id
 // user_id
 // register_number
@@ -15,30 +17,83 @@ const db = require("../config/db");
 // year
 // section
 //
-// IMPORTANT:
-// register_number is returned as student_code in the API
-// so the existing frontend does not need to change.
+// attendance
+// -----------------------------------------------------
+// attendance_id
+// session_id
+// student_id
+// scanned_at
+// status = PRESENT / LATE
 //
-// students.phone DOES NOT EXIST.
-// students.student_code DOES NOT EXIST.
+// attendance_sessions
+// -----------------------------------------------------
+// session_id
+// subject_id
+// staff_id
+// allocation_id
+// class_id
+// academic_year
+// session_date
+// start_time
+// end_time
+// qr_token
+// qr_expires_at
+// status = ACTIVE / CLOSED
+//
+// subjects
+// -----------------------------------------------------
+// subject_id
+// subject_code
+// subject_name
+// department
+// year
+// credits
+// semester
+// section
+// staff_id
+//
+// subject_allocations
+// -----------------------------------------------------
+// allocation_id
+// subject_id
+// staff_id
+// class_id
+// academic_year
+// department
+// year
+// semester
+// created_at
+//
+// classes
+// -----------------------------------------------------
+// class_id
+// department_id
+// year
+// section
+//
 // =====================================================
 
 
 // =====================================================
-// HELPERS
+// HELPER: NORMALIZE
 // =====================================================
 
 const normalize = (value) => {
-    if (value === null || value === undefined) {
+    if (
+        value === null ||
+        value === undefined
+    ) {
         return "";
     }
 
-    return String(value).trim().toLowerCase();
+    return String(value)
+        .trim()
+        .toLowerCase();
 };
 
 
 // =====================================================
-// GET USER ID
+// HELPER: GET USER ID
 // =====================================================
 
 const getUserId = (req) => {
@@ -52,7 +107,7 @@ const getUserId = (req) => {
 
 
 // =====================================================
-// GET USER ROLE
+// HELPER: GET USER ROLE
 // =====================================================
 
 const getUserRole = (req) => {
@@ -86,7 +141,9 @@ const getLoggedInStaffId = async (req) => {
         [userId]
     );
 
-    return rows.length ? rows[0].staff_id : null;
+    return rows.length
+        ? rows[0].staff_id
+        : null;
 };
 
 
@@ -119,26 +176,17 @@ const getStaffByRequest = async (req) => {
         [userId]
     );
 
-    return rows.length ? rows[0] : null;
+    return rows.length
+        ? rows[0]
+        : null;
 };
 
 
 // =====================================================
 // GET LOGGED-IN STUDENT
 //
-// ACTUAL STUDENTS TABLE:
-//
-// student_id
-// user_id
-// register_number
-// name
-// email
-// department
-// year
-// section
-//
-// register_number is aliased as student_code so the
-// existing frontend/API structure remains compatible.
+// register_number is mapped to student_code so that
+// the existing frontend can continue using student_code.
 // =====================================================
 
 const getLoggedInStudent = async (req) => {
@@ -153,21 +201,28 @@ const getLoggedInStudent = async (req) => {
         SELECT
             s.student_id,
             s.user_id,
+
             s.register_number AS student_code,
             s.register_number,
+
             s.name,
             s.email,
             s.department,
             s.year,
             s.section
+
         FROM students s
+
         WHERE s.user_id = ?
+
         LIMIT 1
         `,
         [userId]
     );
 
-    return rows.length ? rows[0] : null;
+    return rows.length
+        ? rows[0]
+        : null;
 };
 
 
@@ -190,7 +245,7 @@ const extractQRToken = (req) => {
 
 
 // =====================================================
-// GET SESSION ALLOCATION
+// GET ATTENDANCE SESSION
 // =====================================================
 
 const getSessionAllocation = async (sessionId) => {
@@ -198,24 +253,25 @@ const getSessionAllocation = async (sessionId) => {
         `
         SELECT
             ats.session_id,
-            ats.allocation_id,
             ats.subject_id,
             ats.staff_id,
+            ats.allocation_id,
             ats.class_id,
             ats.academic_year,
-            ats.semester,
             ats.session_date,
             ats.start_time,
             ats.end_time,
-            ats.status,
             ats.qr_token,
             ats.qr_expires_at,
+            ats.status,
 
             sa.allocation_id AS allocation_exists,
-            sa.staff_id AS allocation_staff_id,
             sa.subject_id AS allocation_subject_id,
+            sa.staff_id AS allocation_staff_id,
             sa.class_id AS allocation_class_id,
             sa.academic_year AS allocation_academic_year,
+            sa.department AS allocation_department,
+            sa.year AS allocation_year,
             sa.semester AS allocation_semester
 
         FROM attendance_sessions ats
@@ -230,7 +286,9 @@ const getSessionAllocation = async (sessionId) => {
         [sessionId]
     );
 
-    return rows.length ? rows[0] : null;
+    return rows.length
+        ? rows[0]
+        : null;
 };
 
 
@@ -238,7 +296,10 @@ const getSessionAllocation = async (sessionId) => {
 // VALIDATE STUDENT FOR SESSION
 // =====================================================
 
-const validateStudentForSession = async (student, session) => {
+const validateStudentForSession = async (
+    student,
+    session
+) => {
     if (!student || !session) {
         return {
             valid: false,
@@ -247,8 +308,7 @@ const validateStudentForSession = async (student, session) => {
     }
 
     // -------------------------------------------------
-    // If the session has no class allocation,
-    // do not block the student here.
+    // NO CLASS ASSIGNED
     // -------------------------------------------------
 
     if (!session.class_id) {
@@ -257,15 +317,22 @@ const validateStudentForSession = async (student, session) => {
         };
     }
 
+    // -------------------------------------------------
+    // GET CLASS
+    // -------------------------------------------------
+
     const [classRows] = await db.query(
         `
         SELECT
             class_id,
+            department_id,
             year,
-            section,
-            department_id
+            section
+
         FROM classes
+
         WHERE class_id = ?
+
         LIMIT 1
         `,
         [session.class_id]
@@ -274,14 +341,15 @@ const validateStudentForSession = async (student, session) => {
     if (!classRows.length) {
         return {
             valid: false,
-            message: "The class assigned to this attendance session was not found."
+            message:
+                "The class assigned to this session was not found."
         };
     }
 
     const classInfo = classRows[0];
 
     // -------------------------------------------------
-    // YEAR CHECK
+    // YEAR
     // -------------------------------------------------
 
     if (
@@ -290,16 +358,20 @@ const validateStudentForSession = async (student, session) => {
         classInfo.year !== null &&
         classInfo.year !== undefined
     ) {
-        if (Number(student.year) !== Number(classInfo.year)) {
+        if (
+            Number(student.year) !==
+            Number(classInfo.year)
+        ) {
             return {
                 valid: false,
-                message: "You are not eligible for this class."
+                message:
+                    "You are not eligible for this class year."
             };
         }
     }
 
     // -------------------------------------------------
-    // SECTION CHECK
+    // SECTION
     // -------------------------------------------------
 
     if (
@@ -312,49 +384,65 @@ const validateStudentForSession = async (student, session) => {
         ) {
             return {
                 valid: false,
-                message: "You are not eligible for this class section."
+                message:
+                    "You are not eligible for this class section."
             };
         }
     }
 
     // -------------------------------------------------
-    // DEPARTMENT CHECK
+    // DEPARTMENT
     // -------------------------------------------------
 
-    if (classInfo.department_id && student.department) {
-        const [departmentRows] = await db.query(
-            `
-            SELECT
-                department_id,
-                department_name,
-                department_code
-            FROM departments
-            WHERE department_id = ?
-               OR LOWER(TRIM(department_name)) = ?
-               OR LOWER(TRIM(department_code)) = ?
-            LIMIT 1
-            `,
-            [
-                classInfo.department_id,
-                normalize(student.department),
-                normalize(student.department)
-            ]
-        );
+    if (
+        classInfo.department_id &&
+        student.department
+    ) {
+        const [departmentRows] =
+            await db.query(
+                `
+                SELECT
+                    department_id,
+                    department_name,
+                    department_code
+
+                FROM departments
+
+                WHERE department_id = ?
+
+                LIMIT 1
+                `,
+                [classInfo.department_id]
+            );
 
         if (departmentRows.length) {
-            const department = departmentRows[0];
+            const department =
+                departmentRows[0];
 
-            const studentDepartment = normalize(student.department);
+            const studentDepartment =
+                normalize(student.department);
 
             const matchesDepartment =
-                studentDepartment === normalize(department.department_name) ||
-                studentDepartment === normalize(department.department_code) ||
-                studentDepartment === String(department.department_id);
+                studentDepartment ===
+                    normalize(
+                        department.department_name
+                    ) ||
+
+                studentDepartment ===
+                    normalize(
+                        department.department_code
+                    ) ||
+
+                studentDepartment ===
+                    String(
+                        department.department_id
+                    );
 
             if (!matchesDepartment) {
                 return {
                     valid: false,
-                    message: "You are not eligible for this department."
+                    message:
+                        "You are not eligible for this department."
                 };
             }
         }
@@ -367,7 +455,7 @@ const validateStudentForSession = async (student, session) => {
 
 
 // =====================================================
-// CHECK STAFF SUBJECT + CLASS ALLOCATION
+// CHECK STAFF SUBJECT CLASS ALLOCATION
 // =====================================================
 
 const checkStaffSubjectClassAllocation = async (
@@ -375,17 +463,24 @@ const checkStaffSubjectClassAllocation = async (
     subjectId,
     classId
 ) => {
-    if (!staffId || !subjectId || !classId) {
+    if (
+        !staffId ||
+        !subjectId ||
+        !classId
+    ) {
         return false;
     }
 
     const [rows] = await db.query(
         `
         SELECT allocation_id
+
         FROM subject_allocations
+
         WHERE staff_id = ?
           AND subject_id = ?
           AND class_id = ?
+
         LIMIT 1
         `,
         [
@@ -407,24 +502,36 @@ const validateStaffForSession = async (
     req,
     session
 ) => {
-    const staffId = await getLoggedInStaffId(req);
+    const staffId =
+        await getLoggedInStaffId(req);
 
     if (!staffId) {
         return {
             valid: false,
-            message: "Staff profile not found."
+            message:
+                "Staff profile not found."
         };
     }
 
+    // -------------------------------------------------
+    // SESSION STAFF CHECK
+    // -------------------------------------------------
+
     if (
         session.staff_id &&
-        Number(session.staff_id) !== Number(staffId)
+        Number(session.staff_id) !==
+        Number(staffId)
     ) {
         return {
             valid: false,
-            message: "You are not authorized to access this attendance session."
+            message:
+                "You are not authorized to access this attendance session."
         };
     }
+
+    // -------------------------------------------------
+    // ALLOCATION CHECK
+    // -------------------------------------------------
 
     if (
         session.subject_id &&
@@ -440,7 +547,8 @@ const validateStaffForSession = async (
         if (!allocated) {
             return {
                 valid: false,
-                message: "This subject/class is not assigned to you."
+                message:
+                    "This subject/class is not assigned to you."
             };
         }
     }
@@ -456,14 +564,19 @@ const validateStaffForSession = async (
 // GET MY SUBJECT CLASSES
 // =====================================================
 
-const getMySubjectClasses = async (req, res) => {
+const getMySubjectClasses = async (
+    req,
+    res
+) => {
     try {
-        const staffId = await getLoggedInStaffId(req);
+        const staffId =
+            await getLoggedInStaffId(req);
 
         if (!staffId) {
             return res.status(404).json({
                 success: false,
-                message: "Staff profile not found."
+                message:
+                    "Staff profile not found."
             });
         }
 
@@ -477,12 +590,15 @@ const getMySubjectClasses = async (req, res) => {
                 sa.subject_id,
                 s.subject_code,
                 s.subject_name,
+                s.semester AS subject_semester,
 
                 sa.class_id,
+
                 c.year,
                 c.section,
 
                 c.department_id,
+
                 d.department_name,
                 d.department_code,
 
@@ -492,13 +608,16 @@ const getMySubjectClasses = async (req, res) => {
             FROM subject_allocations sa
 
             INNER JOIN subjects s
-                ON s.subject_id = sa.subject_id
+                ON s.subject_id =
+                   sa.subject_id
 
             INNER JOIN classes c
-                ON c.class_id = sa.class_id
+                ON c.class_id =
+                   sa.class_id
 
             LEFT JOIN departments d
-                ON d.department_id = c.department_id
+                ON d.department_id =
+                   c.department_id
 
             WHERE sa.staff_id = ?
 
@@ -523,7 +642,8 @@ const getMySubjectClasses = async (req, res) => {
 
         return res.status(500).json({
             success: false,
-            message: "Failed to load assigned classes.",
+            message:
+                "Failed to load assigned classes.",
             error: error.message
         });
     }
@@ -534,14 +654,19 @@ const getMySubjectClasses = async (req, res) => {
 // GET MY SUBJECT STUDENTS
 // =====================================================
 
-const getMySubjectStudents = async (req, res) => {
+const getMySubjectStudents = async (
+    req,
+    res
+) => {
     try {
-        const staffId = await getLoggedInStaffId(req);
+        const staffId =
+            await getLoggedInStaffId(req);
 
         if (!staffId) {
             return res.status(404).json({
                 success: false,
-                message: "Staff profile not found."
+                message:
+                    "Staff profile not found."
             });
         }
 
@@ -553,10 +678,14 @@ const getMySubjectStudents = async (req, res) => {
             req.params.classId ??
             req.query.classId;
 
-        if (!subjectId || !classId) {
+        if (
+            !subjectId ||
+            !classId
+        ) {
             return res.status(400).json({
                 success: false,
-                message: "subjectId and classId are required."
+                message:
+                    "subjectId and classId are required."
             });
         }
 
@@ -570,7 +699,8 @@ const getMySubjectStudents = async (req, res) => {
         if (!allocated) {
             return res.status(403).json({
                 success: false,
-                message: "This subject/class is not assigned to you."
+                message:
+                    "This subject/class is not assigned to you."
             });
         }
 
@@ -579,8 +709,10 @@ const getMySubjectStudents = async (req, res) => {
             SELECT
                 s.student_id,
                 s.user_id,
+
                 s.register_number AS student_code,
                 s.register_number,
+
                 s.name,
                 s.email,
                 s.department,
@@ -596,16 +728,19 @@ const getMySubjectStudents = async (req, res) => {
                 (
                     s.year = c.year
                     OR s.year IS NULL
-                    OR c.year IS NULL
                 )
 
                 AND
+
                 (
-                    LOWER(TRIM(s.section)) =
-                    LOWER(TRIM(c.section))
+                    LOWER(
+                        TRIM(s.section)
+                    ) =
+                    LOWER(
+                        TRIM(c.section)
+                    )
 
                     OR s.section IS NULL
-                    OR c.section IS NULL
                 )
 
             ORDER BY
@@ -627,7 +762,8 @@ const getMySubjectStudents = async (req, res) => {
 
         return res.status(500).json({
             success: false,
-            message: "Failed to load students.",
+            message:
+                "Failed to load students.",
             error: error.message
         });
     }
@@ -638,9 +774,13 @@ const getMySubjectStudents = async (req, res) => {
 // GET ATTENDANCE
 // =====================================================
 
-const getAttendance = async (req, res) => {
+const getAttendance = async (
+    req,
+    res
+) => {
     try {
-        const role = getUserRole(req);
+        const role =
+            getUserRole(req);
 
         let query = `
             SELECT
@@ -662,26 +802,30 @@ const getAttendance = async (req, res) => {
                 ats.subject_id,
                 ats.staff_id,
                 ats.class_id,
+                ats.allocation_id,
                 ats.academic_year,
-                ats.semester,
                 ats.session_date,
                 ats.start_time,
                 ats.end_time,
                 ats.status AS session_status,
 
                 sub.subject_code,
-                sub.subject_name
+                sub.subject_name,
+                sub.semester
 
             FROM attendance a
 
             INNER JOIN students s
-                ON s.student_id = a.student_id
+                ON s.student_id =
+                   a.student_id
 
             INNER JOIN attendance_sessions ats
-                ON ats.session_id = a.session_id
+                ON ats.session_id =
+                   a.session_id
 
             LEFT JOIN subjects sub
-                ON sub.subject_id = ats.subject_id
+                ON sub.subject_id =
+                   ats.subject_id
         `;
 
         const params = [];
@@ -697,7 +841,8 @@ const getAttendance = async (req, res) => {
             if (!student) {
                 return res.status(404).json({
                     success: false,
-                    message: "Student profile not found."
+                    message:
+                        "Student profile not found."
                 });
             }
 
@@ -705,7 +850,9 @@ const getAttendance = async (req, res) => {
                 WHERE a.student_id = ?
             `;
 
-            params.push(student.student_id);
+            params.push(
+                student.student_id
+            );
         }
 
         // -------------------------------------------------
@@ -722,7 +869,8 @@ const getAttendance = async (req, res) => {
             if (!staffId) {
                 return res.status(404).json({
                     success: false,
-                    message: "Staff profile not found."
+                    message:
+                        "Staff profile not found."
                 });
             }
 
@@ -741,13 +889,14 @@ const getAttendance = async (req, res) => {
             role === "admin" ||
             role === "hod"
         ) {
-            // No additional restriction.
+            // No restriction.
         }
 
         else {
             return res.status(403).json({
                 success: false,
-                message: "You are not authorized to view attendance."
+                message:
+                    "You are not authorized to view attendance."
             });
         }
 
@@ -758,7 +907,10 @@ const getAttendance = async (req, res) => {
         `;
 
         const [rows] =
-            await db.query(query, params);
+            await db.query(
+                query,
+                params
+            );
 
         return res.json({
             success: true,
@@ -775,7 +927,8 @@ const getAttendance = async (req, res) => {
 
         return res.status(500).json({
             success: false,
-            message: "Failed to load attendance.",
+            message:
+                "Failed to load attendance.",
             error: error.message
         });
     }
@@ -786,7 +939,10 @@ const getAttendance = async (req, res) => {
 // GET ATTENDANCE BY ID
 // =====================================================
 
-const getAttendanceById = async (req, res) => {
+const getAttendanceById = async (
+    req,
+    res
+) => {
     try {
         const attendanceId =
             req.params.attendanceId ??
@@ -795,7 +951,8 @@ const getAttendanceById = async (req, res) => {
         if (!attendanceId) {
             return res.status(400).json({
                 success: false,
-                message: "Attendance ID is required."
+                message:
+                    "Attendance ID is required."
             });
         }
 
@@ -820,26 +977,30 @@ const getAttendanceById = async (req, res) => {
                 ats.subject_id,
                 ats.staff_id,
                 ats.class_id,
+                ats.allocation_id,
                 ats.academic_year,
-                ats.semester,
                 ats.session_date,
                 ats.start_time,
                 ats.end_time,
                 ats.status AS session_status,
 
                 sub.subject_code,
-                sub.subject_name
+                sub.subject_name,
+                sub.semester
 
             FROM attendance a
 
             INNER JOIN students s
-                ON s.student_id = a.student_id
+                ON s.student_id =
+                   a.student_id
 
             INNER JOIN attendance_sessions ats
-                ON ats.session_id = a.session_id
+                ON ats.session_id =
+                   a.session_id
 
             LEFT JOIN subjects sub
-                ON sub.subject_id = ats.subject_id
+                ON sub.subject_id =
+                   ats.subject_id
 
             WHERE a.attendance_id = ?
 
@@ -851,7 +1012,8 @@ const getAttendanceById = async (req, res) => {
         if (!rows.length) {
             return res.status(404).json({
                 success: false,
-                message: "Attendance record not found."
+                message:
+                    "Attendance record not found."
             });
         }
 
@@ -869,7 +1031,8 @@ const getAttendanceById = async (req, res) => {
 
         return res.status(500).json({
             success: false,
-            message: "Failed to load attendance.",
+            message:
+                "Failed to load attendance.",
             error: error.message
         });
     }
@@ -880,7 +1043,10 @@ const getAttendanceById = async (req, res) => {
 // GET ATTENDANCE BY SESSION
 // =====================================================
 
-const getAttendanceBySession = async (req, res) => {
+const getAttendanceBySession = async (
+    req,
+    res
+) => {
     try {
         const sessionId =
             req.params.sessionId ??
@@ -889,21 +1055,26 @@ const getAttendanceBySession = async (req, res) => {
         if (!sessionId) {
             return res.status(400).json({
                 success: false,
-                message: "Session ID is required."
+                message:
+                    "Session ID is required."
             });
         }
 
         const session =
-            await getSessionAllocation(sessionId);
+            await getSessionAllocation(
+                sessionId
+            );
 
         if (!session) {
             return res.status(404).json({
                 success: false,
-                message: "Attendance session not found."
+                message:
+                    "Attendance session not found."
             });
         }
 
-        const role = getUserRole(req);
+        const role =
+            getUserRole(req);
 
         // -------------------------------------------------
         // STAFF
@@ -922,7 +1093,8 @@ const getAttendanceBySession = async (req, res) => {
             if (!validation.valid) {
                 return res.status(403).json({
                     success: false,
-                    message: validation.message
+                    message:
+                        validation.message
                 });
             }
         }
@@ -938,7 +1110,8 @@ const getAttendanceBySession = async (req, res) => {
             if (!student) {
                 return res.status(404).json({
                     success: false,
-                    message: "Student profile not found."
+                    message:
+                        "Student profile not found."
                 });
             }
 
@@ -951,7 +1124,8 @@ const getAttendanceBySession = async (req, res) => {
             if (!validation.valid) {
                 return res.status(403).json({
                     success: false,
-                    message: validation.message
+                    message:
+                        validation.message
                 });
             }
         }
@@ -977,7 +1151,8 @@ const getAttendanceBySession = async (req, res) => {
             FROM attendance a
 
             INNER JOIN students s
-                ON s.student_id = a.student_id
+                ON s.student_id =
+                   a.student_id
 
             WHERE a.session_id = ?
 
@@ -1002,7 +1177,8 @@ const getAttendanceBySession = async (req, res) => {
 
         return res.status(500).json({
             success: false,
-            message: "Failed to load session attendance.",
+            message:
+                "Failed to load session attendance.",
             error: error.message
         });
     }
@@ -1013,7 +1189,10 @@ const getAttendanceBySession = async (req, res) => {
 // GET ATTENDANCE COUNT BY SESSION
 // =====================================================
 
-const getAttendanceCountBySession = async (req, res) => {
+const getAttendanceCountBySession = async (
+    req,
+    res
+) => {
     try {
         const sessionId =
             req.params.sessionId ??
@@ -1022,17 +1201,21 @@ const getAttendanceCountBySession = async (req, res) => {
         if (!sessionId) {
             return res.status(400).json({
                 success: false,
-                message: "Session ID is required."
+                message:
+                    "Session ID is required."
             });
         }
 
         const session =
-            await getSessionAllocation(sessionId);
+            await getSessionAllocation(
+                sessionId
+            );
 
         if (!session) {
             return res.status(404).json({
                 success: false,
-                message: "Attendance session not found."
+                message:
+                    "Attendance session not found."
             });
         }
 
@@ -1045,7 +1228,8 @@ const getAttendanceCountBySession = async (req, res) => {
         if (!validation.valid) {
             return res.status(403).json({
                 success: false,
-                message: validation.message
+                message:
+                    validation.message
             });
         }
 
@@ -1053,20 +1237,22 @@ const getAttendanceCountBySession = async (req, res) => {
             `
             SELECT
                 COUNT(*) AS total,
+
                 SUM(
                     CASE
-                        WHEN LOWER(status) = 'present'
+                        WHEN status = 'PRESENT'
                         THEN 1
                         ELSE 0
                     END
                 ) AS present,
+
                 SUM(
                     CASE
-                        WHEN LOWER(status) = 'absent'
+                        WHEN status = 'LATE'
                         THEN 1
                         ELSE 0
                     END
-                ) AS absent
+                ) AS late
 
             FROM attendance
 
@@ -1075,11 +1261,12 @@ const getAttendanceCountBySession = async (req, res) => {
             [sessionId]
         );
 
-        const result = rows[0] || {
-            total: 0,
-            present: 0,
-            absent: 0
-        };
+        const result =
+            rows[0] || {
+                total: 0,
+                present: 0,
+                late: 0
+            };
 
         return res.json({
             success: true,
@@ -1095,7 +1282,8 @@ const getAttendanceCountBySession = async (req, res) => {
 
         return res.status(500).json({
             success: false,
-            message: "Failed to load attendance count.",
+            message:
+                "Failed to load attendance count.",
             error: error.message
         });
     }
@@ -1106,13 +1294,17 @@ const getAttendanceCountBySession = async (req, res) => {
 // GET ATTENDANCE BY STUDENT
 // =====================================================
 
-const getAttendanceByStudent = async (req, res) => {
+const getAttendanceByStudent = async (
+    req,
+    res
+) => {
     try {
         let studentId =
             req.params.studentId ??
             req.query.studentId;
 
-        const role = getUserRole(req);
+        const role =
+            getUserRole(req);
 
         // -------------------------------------------------
         // STUDENT CAN ONLY SEE OWN ATTENDANCE
@@ -1125,17 +1317,20 @@ const getAttendanceByStudent = async (req, res) => {
             if (!student) {
                 return res.status(404).json({
                     success: false,
-                    message: "Student profile not found."
+                    message:
+                        "Student profile not found."
                 });
             }
 
-            studentId = student.student_id;
+            studentId =
+                student.student_id;
         }
 
         if (!studentId) {
             return res.status(400).json({
                 success: false,
-                message: "Student ID is required."
+                message:
+                    "Student ID is required."
             });
         }
 
@@ -1160,25 +1355,29 @@ const getAttendanceByStudent = async (req, res) => {
                 ats.subject_id,
                 ats.staff_id,
                 ats.class_id,
+                ats.allocation_id,
                 ats.academic_year,
-                ats.semester,
                 ats.session_date,
                 ats.start_time,
                 ats.end_time,
 
                 sub.subject_code,
-                sub.subject_name
+                sub.subject_name,
+                sub.semester
 
             FROM attendance a
 
             INNER JOIN students s
-                ON s.student_id = a.student_id
+                ON s.student_id =
+                   a.student_id
 
             INNER JOIN attendance_sessions ats
-                ON ats.session_id = a.session_id
+                ON ats.session_id =
+                   a.session_id
 
             LEFT JOIN subjects sub
-                ON sub.subject_id = ats.subject_id
+                ON sub.subject_id =
+                   ats.subject_id
 
             WHERE a.student_id = ?
 
@@ -1204,7 +1403,8 @@ const getAttendanceByStudent = async (req, res) => {
 
         return res.status(500).json({
             success: false,
-            message: "Failed to load student attendance.",
+            message:
+                "Failed to load student attendance.",
             error: error.message
         });
     }
@@ -1214,12 +1414,13 @@ const getAttendanceByStudent = async (req, res) => {
 // =====================================================
 // GET MY ATTENDANCE
 //
-// THIS IS THE ENDPOINT CURRENTLY FAILING:
-//
 // GET /api/attendance/my
 // =====================================================
 
-const getMyAttendance = async (req, res) => {
+const getMyAttendance = async (
+    req,
+    res
+) => {
     try {
         const student =
             await getLoggedInStudent(req);
@@ -1227,7 +1428,8 @@ const getMyAttendance = async (req, res) => {
         if (!student) {
             return res.status(404).json({
                 success: false,
-                message: "Student profile not found."
+                message:
+                    "Student profile not found."
             });
         }
 
@@ -1241,8 +1443,10 @@ const getMyAttendance = async (req, res) => {
                 a.scanned_at,
 
                 s.user_id,
+
                 s.register_number AS student_code,
                 s.register_number,
+
                 s.name AS student_name,
                 s.email,
                 s.department,
@@ -1252,26 +1456,30 @@ const getMyAttendance = async (req, res) => {
                 ats.subject_id,
                 ats.staff_id,
                 ats.class_id,
+                ats.allocation_id,
                 ats.academic_year,
-                ats.semester,
                 ats.session_date,
                 ats.start_time,
                 ats.end_time,
                 ats.status AS session_status,
 
                 sub.subject_code,
-                sub.subject_name
+                sub.subject_name,
+                sub.semester
 
             FROM attendance a
 
             INNER JOIN students s
-                ON s.student_id = a.student_id
+                ON s.student_id =
+                   a.student_id
 
             INNER JOIN attendance_sessions ats
-                ON ats.session_id = a.session_id
+                ON ats.session_id =
+                   a.session_id
 
             LEFT JOIN subjects sub
-                ON sub.subject_id = ats.subject_id
+                ON sub.subject_id =
+                   ats.subject_id
 
             WHERE a.student_id = ?
 
@@ -1282,28 +1490,48 @@ const getMyAttendance = async (req, res) => {
             [student.student_id]
         );
 
+        // -------------------------------------------------
+        // RESPONSE
+        // -------------------------------------------------
+
         return res.json({
             success: true,
 
-            // Main response used by frontend
             attendance: rows,
 
-            // Compatibility aliases
             records: rows,
+
             attendance_records: rows,
+
             data: rows,
 
-            // Logged-in student information
             student: {
-                student_id: student.student_id,
-                user_id: student.user_id,
-                student_code: student.student_code,
-                register_number: student.register_number,
-                name: student.name,
-                email: student.email,
-                department: student.department,
-                year: student.year,
-                section: student.section
+                student_id:
+                    student.student_id,
+
+                user_id:
+                    student.user_id,
+
+                student_code:
+                    student.student_code,
+
+                register_number:
+                    student.register_number,
+
+                name:
+                    student.name,
+
+                email:
+                    student.email,
+
+                department:
+                    student.department,
+
+                year:
+                    student.year,
+
+                section:
+                    student.section
             }
         });
 
@@ -1315,7 +1543,8 @@ const getMyAttendance = async (req, res) => {
 
         return res.status(500).json({
             success: false,
-            message: "Failed to load your attendance.",
+            message:
+                "Failed to load your attendance.",
             error: error.message
         });
     }
@@ -1326,26 +1555,32 @@ const getMyAttendance = async (req, res) => {
 // MARK ATTENDANCE
 // =====================================================
 
-const markAttendance = async (req, res) => {
+const markAttendance = async (
+    req,
+    res
+) => {
     try {
         const {
             session_id,
             sessionId,
             student_id,
             studentId,
-            status = "present"
+            status = "PRESENT"
         } = req.body;
 
         const finalSessionId =
-            session_id ?? sessionId;
+            session_id ??
+            sessionId;
 
         let finalStudentId =
-            student_id ?? studentId;
+            student_id ??
+            studentId;
 
         if (!finalSessionId) {
             return res.status(400).json({
                 success: false,
-                message: "session_id is required."
+                message:
+                    "session_id is required."
             });
         }
 
@@ -1353,54 +1588,35 @@ const markAttendance = async (req, res) => {
         // STUDENT
         // -------------------------------------------------
 
-        if (getUserRole(req) === "student") {
+        if (
+            getUserRole(req) ===
+            "student"
+        ) {
             const student =
                 await getLoggedInStudent(req);
 
             if (!student) {
                 return res.status(404).json({
                     success: false,
-                    message: "Student profile not found."
+                    message:
+                        "Student profile not found."
                 });
             }
 
-            finalStudentId = student.student_id;
-
-            const session =
-                await getSessionAllocation(
-                    finalSessionId
-                );
-
-            if (!session) {
-                return res.status(404).json({
-                    success: false,
-                    message: "Attendance session not found."
-                });
-            }
-
-            const validation =
-                await validateStudentForSession(
-                    student,
-                    session
-                );
-
-            if (!validation.valid) {
-                return res.status(403).json({
-                    success: false,
-                    message: validation.message
-                });
-            }
+            finalStudentId =
+                student.student_id;
         }
 
         if (!finalStudentId) {
             return res.status(400).json({
                 success: false,
-                message: "student_id is required."
+                message:
+                    "student_id is required."
             });
         }
 
         // -------------------------------------------------
-        // CHECK SESSION
+        // SESSION
         // -------------------------------------------------
 
         const session =
@@ -1411,17 +1627,21 @@ const markAttendance = async (req, res) => {
         if (!session) {
             return res.status(404).json({
                 success: false,
-                message: "Attendance session not found."
+                message:
+                    "Attendance session not found."
             });
         }
 
         // -------------------------------------------------
-        // CHECK STAFF
+        // STAFF AUTHORIZATION
         // -------------------------------------------------
 
+        const role =
+            getUserRole(req);
+
         if (
-            getUserRole(req) === "staff" ||
-            getUserRole(req) === "teacher"
+            role === "staff" ||
+            role === "teacher"
         ) {
             const validation =
                 await validateStaffForSession(
@@ -1432,48 +1652,99 @@ const markAttendance = async (req, res) => {
             if (!validation.valid) {
                 return res.status(403).json({
                     success: false,
-                    message: validation.message
+                    message:
+                        validation.message
                 });
             }
         }
 
         // -------------------------------------------------
-        // SESSION STATUS
+        // STUDENT ELIGIBILITY
+        // -------------------------------------------------
+
+        if (role === "student") {
+            const student =
+                await getLoggedInStudent(req);
+
+            const validation =
+                await validateStudentForSession(
+                    student,
+                    session
+                );
+
+            if (!validation.valid) {
+                return res.status(403).json({
+                    success: false,
+                    message:
+                        validation.message
+                });
+            }
+        }
+
+        // -------------------------------------------------
+        // ACTIVE SESSION
         // -------------------------------------------------
 
         if (
-            session.status &&
-            normalize(session.status) !== "active"
+            normalize(session.status) !==
+            "active"
         ) {
             return res.status(400).json({
                 success: false,
-                message: "This attendance session is no longer active."
+                message:
+                    "This attendance session is no longer active."
             });
         }
 
         // -------------------------------------------------
-        // DUPLICATE CHECK
+        // VALIDATE STATUS
         // -------------------------------------------------
 
-        const [existing] = await db.query(
-            `
-            SELECT attendance_id
-            FROM attendance
-            WHERE session_id = ?
-              AND student_id = ?
-            LIMIT 1
-            `,
-            [
-                finalSessionId,
-                finalStudentId
-            ]
-        );
+        const finalStatus =
+            String(status)
+                .trim()
+                .toUpperCase();
+
+        if (
+            finalStatus !== "PRESENT" &&
+            finalStatus !== "LATE"
+        ) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Status must be PRESENT or LATE."
+            });
+        }
+
+        // -------------------------------------------------
+        // DUPLICATE
+        // -------------------------------------------------
+
+        const [existing] =
+            await db.query(
+                `
+                SELECT attendance_id
+
+                FROM attendance
+
+                WHERE session_id = ?
+                  AND student_id = ?
+
+                LIMIT 1
+                `,
+                [
+                    finalSessionId,
+                    finalStudentId
+                ]
+            );
 
         if (existing.length) {
             return res.status(409).json({
                 success: false,
-                message: "Attendance has already been marked for this session.",
-                attendance_id: existing[0].attendance_id
+                message:
+                    "Attendance has already been marked for this session.",
+                attendance_id:
+                    existing[0].attendance_id
             });
         }
 
@@ -1481,29 +1752,33 @@ const markAttendance = async (req, res) => {
         // INSERT
         // -------------------------------------------------
 
-        const [result] = await db.query(
-            `
-            INSERT INTO attendance
-            (
-                session_id,
-                student_id,
-                status,
-                scanned_at
-            )
-            VALUES
-            (?, ?, ?, NOW())
-            `,
-            [
-                finalSessionId,
-                finalStudentId,
-                status
-            ]
-        );
+        const [result] =
+            await db.query(
+                `
+                INSERT INTO attendance
+                (
+                    session_id,
+                    student_id,
+                    status,
+                    scanned_at
+                )
+
+                VALUES
+                (?, ?, ?, NOW())
+                `,
+                [
+                    finalSessionId,
+                    finalStudentId,
+                    finalStatus
+                ]
+            );
 
         return res.status(201).json({
             success: true,
-            message: "Attendance marked successfully.",
-            attendance_id: result.insertId
+            message:
+                "Attendance marked successfully.",
+            attendance_id:
+                result.insertId
         });
 
     } catch (error) {
@@ -1514,7 +1789,8 @@ const markAttendance = async (req, res) => {
 
         return res.status(500).json({
             success: false,
-            message: "Failed to mark attendance.",
+            message:
+                "Failed to mark attendance.",
             error: error.message
         });
     }
@@ -1525,7 +1801,10 @@ const markAttendance = async (req, res) => {
 // SCAN ATTENDANCE
 // =====================================================
 
-const scanAttendance = async (req, res) => {
+const scanAttendance = async (
+    req,
+    res
+) => {
     try {
         const qrToken =
             extractQRToken(req);
@@ -1533,7 +1812,8 @@ const scanAttendance = async (req, res) => {
         if (!qrToken) {
             return res.status(400).json({
                 success: false,
-                message: "QR token is required."
+                message:
+                    "QR token is required."
             });
         }
 
@@ -1543,80 +1823,92 @@ const scanAttendance = async (req, res) => {
         if (!student) {
             return res.status(404).json({
                 success: false,
-                message: "Student profile not found."
+                message:
+                    "Student profile not found."
             });
         }
 
         // -------------------------------------------------
-        // FIND SESSION BY QR TOKEN
+        // FIND SESSION
         // -------------------------------------------------
 
-        const [sessionRows] = await db.query(
-            `
-            SELECT
-                session_id,
-                allocation_id,
-                subject_id,
-                staff_id,
-                class_id,
-                academic_year,
-                semester,
-                session_date,
-                start_time,
-                end_time,
-                status,
-                qr_token,
-                qr_expires_at
+        const [sessionRows] =
+            await db.query(
+                `
+                SELECT
+                    session_id,
+                    subject_id,
+                    staff_id,
+                    allocation_id,
+                    class_id,
+                    academic_year,
+                    session_date,
+                    start_time,
+                    end_time,
+                    qr_token,
+                    qr_expires_at,
+                    status
 
-            FROM attendance_sessions
+                FROM attendance_sessions
 
-            WHERE qr_token = ?
+                WHERE qr_token = ?
 
-            ORDER BY session_id DESC
+                ORDER BY session_id DESC
 
-            LIMIT 1
-            `,
-            [qrToken]
-        );
+                LIMIT 1
+                `,
+                [qrToken]
+            );
 
         if (!sessionRows.length) {
             return res.status(404).json({
                 success: false,
-                message: "Invalid QR code."
+                message:
+                    "Invalid QR code."
             });
         }
 
-        const session = sessionRows[0];
+        const session =
+            sessionRows[0];
 
         // -------------------------------------------------
-        // SESSION ACTIVE CHECK
+        // ACTIVE
         // -------------------------------------------------
 
         if (
-            session.status &&
-            normalize(session.status) !== "active"
+            normalize(session.status) !==
+            "active"
         ) {
             return res.status(400).json({
                 success: false,
-                message: "This attendance session is closed."
+                message:
+                    "This attendance session is closed."
             });
         }
 
         // -------------------------------------------------
-        // QR EXPIRY CHECK
+        // QR EXPIRY
         // -------------------------------------------------
 
-        if (session.qr_expires_at) {
+        if (
+            session.qr_expires_at
+        ) {
             const expiry =
-                new Date(session.qr_expires_at);
+                new Date(
+                    session.qr_expires_at
+                );
 
             if (
-                !Number.isNaN(expiry.getTime()) &&
-                expiry.getTime() < Date.now()
+                !Number.isNaN(
+                    expiry.getTime()
+                ) &&
+                expiry.getTime() <
+                    Date.now()
             ) {
                 return res.status(400).json({
                     success: false,
-                    message: "This QR code has expired."
+                    message:
+                        "This QR code has expired."
                 });
             }
         }
@@ -1625,134 +1917,157 @@ const scanAttendance = async (req, res) => {
         // STUDENT ELIGIBILITY
         // -------------------------------------------------
 
-        const studentValidation =
+        const validation =
             await validateStudentForSession(
                 student,
                 session
             );
 
-        if (!studentValidation.valid) {
+        if (!validation.valid) {
             return res.status(403).json({
                 success: false,
-                message: studentValidation.message
+                message:
+                    validation.message
             });
         }
 
         // -------------------------------------------------
-        // DUPLICATE CHECK
+        // DUPLICATE
         // -------------------------------------------------
 
-        const [existing] = await db.query(
-            `
-            SELECT
-                attendance_id,
-                session_id,
-                student_id,
-                status,
-                scanned_at
+        const [existing] =
+            await db.query(
+                `
+                SELECT
+                    attendance_id,
+                    session_id,
+                    student_id,
+                    status,
+                    scanned_at
 
-            FROM attendance
+                FROM attendance
 
-            WHERE session_id = ?
-              AND student_id = ?
+                WHERE session_id = ?
+                  AND student_id = ?
 
-            LIMIT 1
-            `,
-            [
-                session.session_id,
-                student.student_id
-            ]
-        );
+                LIMIT 1
+                `,
+                [
+                    session.session_id,
+                    student.student_id
+                ]
+            );
 
         if (existing.length) {
             return res.status(409).json({
                 success: false,
-                message: "Attendance already marked for this session.",
-                attendance: existing[0]
+                message:
+                    "Attendance already marked for this session.",
+                attendance:
+                    existing[0]
             });
         }
 
         // -------------------------------------------------
-        // INSERT ATTENDANCE
+        // INSERT
         // -------------------------------------------------
 
-        const [insertResult] = await db.query(
-            `
-            INSERT INTO attendance
-            (
-                session_id,
-                student_id,
-                status,
-                scanned_at
-            )
-            VALUES
-            (?, ?, 'present', NOW())
-            `,
-            [
-                session.session_id,
-                student.student_id
-            ]
-        );
+        const [insertResult] =
+            await db.query(
+                `
+                INSERT INTO attendance
+                (
+                    session_id,
+                    student_id,
+                    status,
+                    scanned_at
+                )
+
+                VALUES
+                (?, ?, 'PRESENT', NOW())
+                `,
+                [
+                    session.session_id,
+                    student.student_id
+                ]
+            );
 
         // -------------------------------------------------
-        // READ BACK INSERTED RECORD
+        // READ BACK
         // -------------------------------------------------
 
-        const [attendanceRows] = await db.query(
-            `
-            SELECT
-                a.attendance_id,
-                a.session_id,
-                a.student_id,
-                a.status,
-                a.scanned_at,
+        const [attendanceRows] =
+            await db.query(
+                `
+                SELECT
+                    a.attendance_id,
+                    a.session_id,
+                    a.student_id,
+                    a.status,
+                    a.scanned_at,
 
-                s.user_id,
-                s.register_number AS student_code,
-                s.register_number,
-                s.name AS student_name,
-                s.email,
-                s.department,
-                s.year,
-                s.section,
+                    s.user_id,
+                    s.register_number AS student_code,
+                    s.register_number,
+                    s.name AS student_name,
+                    s.email,
+                    s.department,
+                    s.year,
+                    s.section,
 
-                ats.subject_id,
-                ats.staff_id,
-                ats.class_id,
-                ats.session_date,
-                ats.start_time,
-                ats.end_time,
+                    ats.subject_id,
+                    ats.staff_id,
+                    ats.class_id,
+                    ats.allocation_id,
+                    ats.academic_year,
+                    ats.session_date,
+                    ats.start_time,
+                    ats.end_time,
 
-                sub.subject_code,
-                sub.subject_name
+                    sub.subject_code,
+                    sub.subject_name,
+                    sub.semester
 
-            FROM attendance a
+                FROM attendance a
 
-            INNER JOIN students s
-                ON s.student_id = a.student_id
+                INNER JOIN students s
+                    ON s.student_id =
+                       a.student_id
 
-            INNER JOIN attendance_sessions ats
-                ON ats.session_id = a.session_id
+                INNER JOIN attendance_sessions ats
+                    ON ats.session_id =
+                       a.session_id
 
-            LEFT JOIN subjects sub
-                ON sub.subject_id = ats.subject_id
+                LEFT JOIN subjects sub
+                    ON sub.subject_id =
+                       ats.subject_id
 
-            WHERE a.attendance_id = ?
+                WHERE a.attendance_id = ?
 
-            LIMIT 1
-            `,
-            [insertResult.insertId]
-        );
+                LIMIT 1
+                `,
+                [insertResult.insertId]
+            );
 
         return res.status(201).json({
             success: true,
-            message: "Attendance marked successfully.",
-            attendance: attendanceRows[0] || {
-                attendance_id: insertResult.insertId,
-                session_id: session.session_id,
-                student_id: student.student_id,
-                status: "present"
-            }
+            message:
+                "Attendance marked successfully.",
+
+            attendance:
+                attendanceRows[0] || {
+                    attendance_id:
+                        insertResult.insertId,
+
+                    session_id:
+                        session.session_id,
+
+                    student_id:
+                        student.student_id,
+
+                    status:
+                        "PRESENT"
+                }
         });
 
     } catch (error) {
@@ -1763,7 +2078,8 @@ const scanAttendance = async (req, res) => {
 
         return res.status(500).json({
             success: false,
-            message: "Failed to process attendance scan.",
+            message:
+                "Failed to process attendance scan.",
             error: error.message
         });
     }
@@ -1774,7 +2090,10 @@ const scanAttendance = async (req, res) => {
 // UPDATE ATTENDANCE
 // =====================================================
 
-const updateAttendance = async (req, res) => {
+const updateAttendance = async (
+    req,
+    res
+) => {
     try {
         const attendanceId =
             req.params.attendanceId ??
@@ -1787,50 +2106,68 @@ const updateAttendance = async (req, res) => {
         if (!attendanceId) {
             return res.status(400).json({
                 success: false,
-                message: "Attendance ID is required."
+                message:
+                    "Attendance ID is required."
             });
         }
 
-        if (!status) {
+        const finalStatus =
+            String(status || "")
+                .trim()
+                .toUpperCase();
+
+        if (
+            finalStatus !== "PRESENT" &&
+            finalStatus !== "LATE"
+        ) {
             return res.status(400).json({
                 success: false,
-                message: "Attendance status is required."
+                message:
+                    "Status must be PRESENT or LATE."
             });
         }
 
-        const [rows] = await db.query(
-            `
-            SELECT
-                a.attendance_id,
-                a.session_id,
+        // -------------------------------------------------
+        // GET RECORD + SESSION STAFF
+        // -------------------------------------------------
 
-                ats.staff_id
+        const [rows] =
+            await db.query(
+                `
+                SELECT
+                    a.attendance_id,
+                    a.session_id,
+                    ats.staff_id
 
-            FROM attendance a
+                FROM attendance a
 
-            INNER JOIN attendance_sessions ats
-                ON ats.session_id = a.session_id
+                INNER JOIN attendance_sessions ats
+                    ON ats.session_id =
+                       a.session_id
 
-            WHERE a.attendance_id = ?
+                WHERE a.attendance_id = ?
 
-            LIMIT 1
-            `,
-            [attendanceId]
-        );
+                LIMIT 1
+                `,
+                [attendanceId]
+            );
 
         if (!rows.length) {
             return res.status(404).json({
                 success: false,
-                message: "Attendance record not found."
+                message:
+                    "Attendance record not found."
             });
         }
 
-        const record = rows[0];
+        const record =
+            rows[0];
 
-        const role = getUserRole(req);
+        const role =
+            getUserRole(req);
 
         // -------------------------------------------------
-        // STAFF AUTHORIZATION
+        // STAFF CHECK
         // -------------------------------------------------
 
         if (
@@ -1847,7 +2184,8 @@ const updateAttendance = async (req, res) => {
             ) {
                 return res.status(403).json({
                     success: false,
-                    message: "You are not authorized to update this attendance."
+                    message:
+                        "You are not authorized to update this attendance."
                 });
             }
         }
@@ -1865,14 +2203,15 @@ const updateAttendance = async (req, res) => {
             WHERE attendance_id = ?
             `,
             [
-                status,
+                finalStatus,
                 attendanceId
             ]
         );
 
         return res.json({
             success: true,
-            message: "Attendance updated successfully."
+            message:
+                "Attendance updated successfully."
         });
 
     } catch (error) {
@@ -1883,7 +2222,8 @@ const updateAttendance = async (req, res) => {
 
         return res.status(500).json({
             success: false,
-            message: "Failed to update attendance.",
+            message:
+                "Failed to update attendance.",
             error: error.message
         });
     }
@@ -1894,7 +2234,10 @@ const updateAttendance = async (req, res) => {
 // DELETE ATTENDANCE
 // =====================================================
 
-const deleteAttendance = async (req, res) => {
+const deleteAttendance = async (
+    req,
+    res
+) => {
     try {
         const attendanceId =
             req.params.attendanceId ??
@@ -1903,39 +2246,39 @@ const deleteAttendance = async (req, res) => {
         if (!attendanceId) {
             return res.status(400).json({
                 success: false,
-                message: "Attendance ID is required."
+                message:
+                    "Attendance ID is required."
             });
         }
 
-        const [rows] = await db.query(
-            `
-            SELECT
-                attendance_id,
-                session_id
+        const [rows] =
+            await db.query(
+                `
+                SELECT
+                    attendance_id,
+                    session_id
 
-            FROM attendance
+                FROM attendance
 
-            WHERE attendance_id = ?
+                WHERE attendance_id = ?
 
-            LIMIT 1
-            `,
-            [attendanceId]
-        );
+                LIMIT 1
+                `,
+                [attendanceId]
+            );
 
         if (!rows.length) {
             return res.status(404).json({
                 success: false,
-                message: "Attendance record not found."
+                message:
+                    "Attendance record not found."
             });
         }
-
-        // -------------------------------------------------
-        // DELETE
-        // -------------------------------------------------
 
         await db.query(
             `
             DELETE FROM attendance
+
             WHERE attendance_id = ?
             `,
             [attendanceId]
@@ -1943,7 +2286,8 @@ const deleteAttendance = async (req, res) => {
 
         return res.json({
             success: true,
-            message: "Attendance deleted successfully."
+            message:
+                "Attendance deleted successfully."
         });
 
     } catch (error) {
@@ -1954,7 +2298,8 @@ const deleteAttendance = async (req, res) => {
 
         return res.status(500).json({
             success: false,
-            message: "Failed to delete attendance.",
+            message:
+                "Failed to delete attendance.",
             error: error.message
         });
     }
