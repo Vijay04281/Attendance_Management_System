@@ -28,9 +28,13 @@ const getLoggedInStaffId = (req) => {
 // HELPER - RESOLVE STAFF ID
 // =====================================================
 
-const resolveStaffId = async (req, providedStaffId = null) => {
+const resolveStaffId = async (
+    req,
+    providedStaffId = null
+) => {
     try {
-        const loggedInId = getLoggedInStaffId(req);
+        const loggedInId =
+            getLoggedInStaffId(req);
 
         const candidateIds = [
             providedStaffId,
@@ -54,18 +58,21 @@ const resolveStaffId = async (req, providedStaffId = null) => {
         // -------------------------------------------------
 
         for (const id of candidateIds) {
-            const [rows] = await db.query(
-                `
-                SELECT staff_id
-                FROM staff
-                WHERE staff_id = ?
-                LIMIT 1
-                `,
-                [id]
-            );
+            const [rows] =
+                await db.query(
+                    `
+                    SELECT staff_id
+                    FROM staff
+                    WHERE staff_id = ?
+                    LIMIT 1
+                    `,
+                    [id]
+                );
 
             if (rows.length > 0) {
-                return Number(rows[0].staff_id);
+                return Number(
+                    rows[0].staff_id
+                );
             }
         }
 
@@ -74,24 +81,31 @@ const resolveStaffId = async (req, providedStaffId = null) => {
         // -------------------------------------------------
 
         for (const id of candidateIds) {
-            const [rows] = await db.query(
-                `
-                SELECT staff_id
-                FROM staff
-                WHERE user_id = ?
-                LIMIT 1
-                `,
-                [id]
-            );
+            const [rows] =
+                await db.query(
+                    `
+                    SELECT staff_id
+                    FROM staff
+                    WHERE user_id = ?
+                    LIMIT 1
+                    `,
+                    [id]
+                );
 
             if (rows.length > 0) {
-                return Number(rows[0].staff_id);
+                return Number(
+                    rows[0].staff_id
+                );
             }
         }
 
         return null;
     } catch (error) {
-        console.error("resolveStaffId error:", error);
+        console.error(
+            "resolveStaffId error:",
+            error
+        );
+
         throw error;
     }
 };
@@ -141,11 +155,16 @@ const formatMySQLDateTime = (date) => {
 // HELPER - BUILD QR DATA
 // =====================================================
 
-const buildQRData = (session, qrToken) => {
+const buildQRData = (
+    session,
+    qrToken
+) => {
     return JSON.stringify({
-        session_id: session.session_id,
+        session_id:
+            session.session_id,
 
-        qr_token: qrToken,
+        qr_token:
+            qrToken,
 
         allocation_id:
             session.allocation_id,
@@ -178,10 +197,11 @@ const generateQRCodeImage = async (
     session,
     qrToken
 ) => {
-    const qrData = buildQRData(
-        session,
-        qrToken
-    );
+    const qrData =
+        buildQRData(
+            session,
+            qrToken
+        );
 
     return await QRCode.toDataURL(
         qrData,
@@ -248,40 +268,56 @@ const sessionSelect = `
     FROM attendance_sessions ats
 
     LEFT JOIN subject_allocations sa
-        ON ats.allocation_id = sa.allocation_id
+        ON ats.allocation_id =
+           sa.allocation_id
 
     LEFT JOIN subjects s
-        ON ats.subject_id = s.subject_id
+        ON ats.subject_id =
+           s.subject_id
 
     LEFT JOIN staff st
-        ON ats.staff_id = st.staff_id
+        ON ats.staff_id =
+           st.staff_id
 
     LEFT JOIN classes c
-        ON c.class_id = COALESCE(
-            ats.class_id,
-            sa.class_id
-        )
+        ON c.class_id =
+           COALESCE(
+               ats.class_id,
+               sa.class_id
+           )
 
     LEFT JOIN departments d
-        ON c.department_id = d.department_id
+        ON c.department_id =
+           d.department_id
 `;
 
 // =====================================================
 // HELPER - GENERATE NEW QR FOR SESSION
+//
+// IMPORTANT:
+//
+// This function ALWAYS creates a NEW QR.
+//
+// It is used only when:
+// 1. A new attendance session starts.
+// 2. The current QR has expired.
+// 3. A student successfully scans.
+// 4. Teacher explicitly forces refresh.
 // =====================================================
 
 const rotateSessionQR = async (
     sessionId,
     connection = db
 ) => {
-    const [rows] = await connection.query(
-        `
-        ${sessionSelect}
-        WHERE ats.session_id = ?
-        LIMIT 1
-        `,
-        [sessionId]
-    );
+    const [rows] =
+        await connection.query(
+            `
+            ${sessionSelect}
+            WHERE ats.session_id = ?
+            LIMIT 1
+            `,
+            [sessionId]
+        );
 
     if (rows.length === 0) {
         throw new Error(
@@ -289,12 +325,14 @@ const rotateSessionQR = async (
         );
     }
 
-    const session = rows[0];
+    const session =
+        rows[0];
 
     if (
         String(
             session.status || ""
-        ).toUpperCase() !== "ACTIVE"
+        ).toUpperCase() !==
+        "ACTIVE"
     ) {
         throw new Error(
             "Attendance session is not active."
@@ -365,6 +403,138 @@ const rotateSessionQR = async (
 };
 
 // =====================================================
+// HELPER - GET CURRENT QR
+//
+// IMPORTANT:
+//
+// Unlike rotateSessionQR(), this function DOES NOT
+// create a new QR when the existing QR is still valid.
+//
+// This is what allows StartAttendance.jsx to poll
+// safely without generating a QR every second.
+//
+// If the existing QR is expired, a new QR is generated.
+// =====================================================
+
+const getCurrentOrRotateSessionQR = async (
+    sessionId,
+    connection = db,
+    forceRefresh = false
+) => {
+    const [rows] =
+        await connection.query(
+            `
+            ${sessionSelect}
+            WHERE ats.session_id = ?
+            LIMIT 1
+            `,
+            [sessionId]
+        );
+
+    if (rows.length === 0) {
+        throw new Error(
+            "Attendance session not found."
+        );
+    }
+
+    const session =
+        rows[0];
+
+    if (
+        String(
+            session.status || ""
+        ).toUpperCase() !==
+        "ACTIVE"
+    ) {
+        throw new Error(
+            "Attendance session is not active."
+        );
+    }
+
+    // -------------------------------------------------
+    // FORCE NEW QR
+    // -------------------------------------------------
+
+    if (forceRefresh) {
+        return await rotateSessionQR(
+            sessionId,
+            connection
+        );
+    }
+
+    // -------------------------------------------------
+    // NO TOKEN = GENERATE
+    // -------------------------------------------------
+
+    if (!session.qr_token) {
+        return await rotateSessionQR(
+            sessionId,
+            connection
+        );
+    }
+
+    // -------------------------------------------------
+    // CHECK EXPIRY USING DATABASE TIME
+    //
+    // This avoids browser/server timezone problems.
+    // -------------------------------------------------
+
+    const [expiryRows] =
+        await connection.query(
+            `
+            SELECT
+                CASE
+                    WHEN qr_expires_at IS NULL
+                        THEN 1
+                    WHEN qr_expires_at <= NOW()
+                        THEN 1
+                    ELSE 0
+                END AS expired
+            FROM attendance_sessions
+            WHERE session_id = ?
+            LIMIT 1
+            `,
+            [sessionId]
+        );
+
+    const expired =
+        Number(
+            expiryRows[0]?.expired || 0
+        ) === 1;
+
+    if (expired) {
+        return await rotateSessionQR(
+            sessionId,
+            connection
+        );
+    }
+
+    // -------------------------------------------------
+    // EXISTING QR IS STILL VALID
+    // -------------------------------------------------
+
+    const qrCode =
+        await generateQRCodeImage(
+            session,
+            session.qr_token
+        );
+
+    return {
+        session,
+
+        qrCode,
+
+        qrToken:
+            session.qr_token,
+
+        qrExpiresAt:
+            session.qr_expires_at,
+
+        qrExpired: false
+    };
+};
+
+// =====================================================
 // HELPER - GENERATE QR DATA FOR EXISTING SESSION
 // =====================================================
 
@@ -395,7 +565,8 @@ const getAttendanceSessions = async (
             req.query.staffId ||
             null;
 
-        let query = sessionSelect;
+        let query =
+            sessionSelect;
 
         const params = [];
         const conditions = [];
@@ -419,7 +590,9 @@ const getAttendanceSessions = async (
                 "ats.staff_id = ?"
             );
 
-            params.push(staffId);
+            params.push(
+                staffId
+            );
         }
 
         if (
@@ -445,7 +618,9 @@ const getAttendanceSessions = async (
                     "ats.staff_id = ?"
                 );
 
-                params.push(staffId);
+                params.push(
+                    staffId
+                );
             }
         }
 
@@ -471,7 +646,9 @@ const getAttendanceSessions = async (
                 "ats.subject_id = ?"
             );
 
-            params.push(subjectId);
+            params.push(
+                subjectId
+            );
         }
 
         if (req.query.class_id) {
@@ -499,7 +676,9 @@ const getAttendanceSessions = async (
                 ) = ?
             `);
 
-            params.push(classId);
+            params.push(
+                classId
+            );
         }
 
         if (req.query.allocation_id) {
@@ -524,7 +703,9 @@ const getAttendanceSessions = async (
                 "ats.allocation_id = ?"
             );
 
-            params.push(allocationId);
+            params.push(
+                allocationId
+            );
         }
 
         if (req.query.status) {
@@ -548,7 +729,9 @@ const getAttendanceSessions = async (
                 "ats.status = ?"
             );
 
-            params.push(status);
+            params.push(
+                status
+            );
         }
 
         if (req.query.session_date) {
@@ -584,8 +767,10 @@ const getAttendanceSessions = async (
 
         return res.json({
             success: true,
-            count: rows.length,
-            sessions: rows
+            count:
+                rows.length,
+            sessions:
+                rows
         });
     } catch (error) {
         console.error(
@@ -597,7 +782,8 @@ const getAttendanceSessions = async (
             success: false,
             message:
                 "Failed to fetch attendance sessions.",
-            error: error.message
+            error:
+                error.message
         });
     }
 };
@@ -612,7 +798,9 @@ const getAttendanceSessionById = async (
 ) => {
     try {
         const sessionId =
-            Number(req.params.id);
+            Number(
+                req.params.id
+            );
 
         if (
             !Number.isInteger(
@@ -659,7 +847,9 @@ const getAttendanceSessionById = async (
                 AND ats.staff_id = ?
             `;
 
-            params.push(staffId);
+            params.push(
+                staffId
+            );
         }
 
         const [rows] =
@@ -678,7 +868,8 @@ const getAttendanceSessionById = async (
 
         return res.json({
             success: true,
-            session: rows[0]
+            session:
+                rows[0]
         });
     } catch (error) {
         console.error(
@@ -690,7 +881,8 @@ const getAttendanceSessionById = async (
             success: false,
             message:
                 "Failed to fetch attendance session.",
-            error: error.message
+            error:
+                error.message
         });
     }
 };
@@ -740,7 +932,8 @@ const getStaffSubjects = async (
 
                     c.year AS class_year,
                     c.section AS class_section,
-                    c.department_id AS class_department_id,
+                    c.department_id
+                        AS class_department_id,
 
                     d.department_name,
                     d.department_code
@@ -749,19 +942,19 @@ const getStaffSubjects = async (
 
                 INNER JOIN subjects s
                     ON sa.subject_id =
-                        s.subject_id
+                       s.subject_id
 
                 INNER JOIN staff st
                     ON sa.staff_id =
-                        st.staff_id
+                       st.staff_id
 
                 LEFT JOIN classes c
                     ON sa.class_id =
-                        c.class_id
+                       c.class_id
 
                 LEFT JOIN departments d
                     ON c.department_id =
-                        d.department_id
+                       d.department_id
 
                 WHERE sa.staff_id = ?
 
@@ -777,9 +970,12 @@ const getStaffSubjects = async (
 
         return res.json({
             success: true,
-            count: rows.length,
-            allocations: rows,
-            subjects: rows
+            count:
+                rows.length,
+            allocations:
+                rows,
+            subjects:
+                rows
         });
     } catch (error) {
         console.error(
@@ -791,22 +987,14 @@ const getStaffSubjects = async (
             success: false,
             message:
                 "Failed to fetch staff subject allocations.",
-            error: error.message
+            error:
+                error.message
         });
     }
 };
 
 // =====================================================
-// GET SUBJECT STAFF TIMETABLE
-//
-// GET /api/attendance-sessions/staff-timetable
-//
-// STAFF / TEACHER
-//
-// Returns ALL timetable entries for the logged-in staff.
-//
-// This supports staff members who teach multiple subjects
-// and/or multiple classes.
+// GET STAFF TIMETABLE
 // =====================================================
 
 const getStaffTimetable = async (
@@ -841,17 +1029,24 @@ const getStaffTimetable = async (
 
                     s.subject_code,
                     s.subject_name,
-                    s.department AS subject_department,
+                    s.department
+                        AS subject_department,
                     s.year AS subject_year,
-                    s.semester AS subject_semester,
+                    s.semester
+                        AS subject_semester,
 
                     st.staff_code,
-                    st.name AS staff_name,
-                    st.email AS staff_email,
-                    st.phone AS staff_phone,
+                    st.name
+                        AS staff_name,
+                    st.email
+                        AS staff_email,
+                    st.phone
+                        AS staff_phone,
 
-                    c.year AS class_year,
-                    c.section AS class_section,
+                    c.year
+                        AS class_year,
+                    c.section
+                        AS class_section,
 
                     c.department_id
                         AS class_department_id,
@@ -863,19 +1058,19 @@ const getStaffTimetable = async (
 
                 INNER JOIN subjects s
                     ON tt.subject_id =
-                        s.subject_id
+                       s.subject_id
 
                 INNER JOIN staff st
                     ON tt.staff_id =
-                        st.staff_id
+                       st.staff_id
 
                 INNER JOIN classes c
                     ON tt.class_id =
-                        c.class_id
+                       c.class_id
 
                 LEFT JOIN departments d
                     ON c.department_id =
-                        d.department_id
+                       d.department_id
 
                 WHERE tt.staff_id = ?
 
@@ -897,74 +1092,67 @@ const getStaffTimetable = async (
                 [staffId]
             );
 
-        // -------------------------------------------------
-        // Format rows for frontend
-        // -------------------------------------------------
+        const timetable =
+            rows.map(
+                (row) => ({
+                    timetable_id:
+                        row.timetable_id,
 
-        const timetable = rows.map(
-            (row) => ({
-                timetable_id:
-                    row.timetable_id,
+                    staff_id:
+                        row.staff_id,
 
-                staff_id:
-                    row.staff_id,
+                    staff_code:
+                        row.staff_code,
 
-                staff_code:
-                    row.staff_code,
+                    staff_name:
+                        row.staff_name,
 
-                staff_name:
-                    row.staff_name,
+                    subject_id:
+                        row.subject_id,
 
-                subject_id:
-                    row.subject_id,
+                    subject_code:
+                        row.subject_code,
 
-                subject_code:
-                    row.subject_code,
+                    subject_name:
+                        row.subject_name,
 
-                subject_name:
-                    row.subject_name,
+                    subject_department:
+                        row.subject_department,
 
-                subject_department:
-                    row.subject_department,
+                    subject_year:
+                        row.subject_year,
 
-                subject_year:
-                    row.subject_year,
+                    subject_semester:
+                        row.subject_semester,
 
-                subject_semester:
-                    row.subject_semester,
+                    class_id:
+                        row.class_id,
 
-                class_id:
-                    row.class_id,
+                    class_year:
+                        row.class_year,
 
-                class_year:
-                    row.class_year,
+                    class_section:
+                        row.class_section,
 
-                class_section:
-                    row.class_section,
+                    department_id:
+                        row.class_department_id,
 
-                department_id:
-                    row.class_department_id,
+                    department_name:
+                        row.department_name,
 
-                department_name:
-                    row.department_name,
+                    department_code:
+                        row.department_code,
 
-                department_code:
-                    row.department_code,
+                    day_of_week:
+                        row.day_of_week,
 
-                day_of_week:
-                    row.day_of_week,
+                    start_time:
+                        row.start_time,
 
-                start_time:
-                    row.start_time,
-
-                end_time:
-                    row.end_time
-            })
-        );
-
-        // -------------------------------------------------
-        // Group by day
-        // -------------------------------------------------
+                    end_time:
+                        row.end_time
+                })
+            );
 
         const grouped = {
             MONDAY: [],
@@ -1019,7 +1207,8 @@ const getStaffTimetable = async (
             success: false,
             message:
                 "Failed to fetch staff timetable.",
-            error: error.message
+            error:
+                error.message
         });
     }
 };
@@ -1076,7 +1265,9 @@ const getActiveSession = async (
                 AND ats.subject_id = ?
             `;
 
-            params.push(subjectId);
+            params.push(
+                subjectId
+            );
         }
 
         if (req.query.class_id) {
@@ -1104,7 +1295,9 @@ const getActiveSession = async (
                 ) = ?
             `;
 
-            params.push(classId);
+            params.push(
+                classId
+            );
         }
 
         if (req.query.allocation_id) {
@@ -1129,7 +1322,9 @@ const getActiveSession = async (
                 AND ats.allocation_id = ?
             `;
 
-            params.push(allocationId);
+            params.push(
+                allocationId
+            );
         }
 
         query += `
@@ -1155,7 +1350,8 @@ const getActiveSession = async (
         return res.json({
             success: true,
             active: true,
-            session: rows[0]
+            session:
+                rows[0]
         });
     } catch (error) {
         console.error(
@@ -1167,7 +1363,8 @@ const getActiveSession = async (
             success: false,
             message:
                 "Failed to fetch active attendance session.",
-            error: error.message
+            error:
+                error.message
         });
     }
 };
@@ -1219,7 +1416,9 @@ const createAttendanceSession = async (
         }
 
         allocation_id =
-            Number(allocation_id);
+            Number(
+                allocation_id
+            );
 
         if (
             !Number.isInteger(
@@ -1239,7 +1438,9 @@ const createAttendanceSession = async (
             subject_id !== ""
         ) {
             subject_id =
-                Number(subject_id);
+                Number(
+                    subject_id
+                );
 
             if (
                 !Number.isInteger(
@@ -1273,7 +1474,9 @@ const createAttendanceSession = async (
             userRole === "TEACHER"
         ) {
             const jwtStaffId =
-                await resolveStaffId(req);
+                await resolveStaffId(
+                    req
+                );
 
             if (
                 !jwtStaffId ||
@@ -1303,11 +1506,13 @@ const createAttendanceSession = async (
 
                     s.subject_code,
                     s.subject_name,
-                    s.department AS subject_department,
+                    s.department
+                        AS subject_department,
 
                     c.year AS class_year,
                     c.section AS class_section,
-                    c.department_id AS class_department_id,
+                    c.department_id
+                        AS class_department_id,
 
                     d.department_name,
                     d.department_code
@@ -1316,15 +1521,15 @@ const createAttendanceSession = async (
 
                 INNER JOIN subjects s
                     ON sa.subject_id =
-                        s.subject_id
+                       s.subject_id
 
                 LEFT JOIN classes c
                     ON sa.class_id =
-                        c.class_id
+                       c.class_id
 
                 LEFT JOIN departments d
                     ON c.department_id =
-                        d.department_id
+                       d.department_id
 
                 WHERE sa.allocation_id = ?
 
@@ -1333,7 +1538,9 @@ const createAttendanceSession = async (
                 [allocation_id]
             );
 
-        if (allocationRows.length === 0) {
+        if (
+            allocationRows.length === 0
+        ) {
             return res.status(404).json({
                 success: false,
                 message:
@@ -1348,7 +1555,9 @@ const createAttendanceSession = async (
             subject_id !== undefined &&
             Number(
                 allocation.subject_id
-            ) !== Number(subject_id)
+            ) !== Number(
+                subject_id
+            )
         ) {
             return res.status(403).json({
                 success: false,
@@ -1410,7 +1619,9 @@ const createAttendanceSession = async (
             class_id !== ""
         ) {
             class_id =
-                Number(class_id);
+                Number(
+                    class_id
+                );
 
             if (
                 !Number.isInteger(
@@ -1449,7 +1660,9 @@ const createAttendanceSession = async (
                 null;
         } else if (
             allocation.academic_year &&
-            String(academic_year) !==
+            String(
+                academic_year
+            ) !==
             String(
                 allocation.academic_year
             )
@@ -1491,15 +1704,21 @@ const createAttendanceSession = async (
 
         status =
             String(
-                status || "ACTIVE"
+                status ||
+                "ACTIVE"
             ).toUpperCase();
 
         if (
             status !== "ACTIVE" &&
             status !== "CLOSED"
         ) {
-            status = "ACTIVE";
+            status =
+                "ACTIVE";
         }
+
+        // -------------------------------------------------
+        // EXISTING ACTIVE SESSION
+        // -------------------------------------------------
 
         const [activeRows] =
             await connection.query(
@@ -1518,10 +1737,13 @@ const createAttendanceSession = async (
                 ]
             );
 
-        if (activeRows.length > 0) {
+        if (
+            activeRows.length > 0
+        ) {
             const existingSessionId =
                 Number(
-                    activeRows[0].session_id
+                    activeRows[0]
+                        .session_id
                 );
 
             const [
@@ -1547,18 +1769,14 @@ const createAttendanceSession = async (
                 });
             }
 
-            const existingSession =
-                existingSessionRows[0];
-
             const qrResult =
                 await rotateSessionQR(
-                    existingSession.session_id,
+                    existingSessionId,
                     connection
                 );
 
             return res.status(200).json({
                 success: true,
-
                 existing: true,
 
                 message:
@@ -1568,7 +1786,8 @@ const createAttendanceSession = async (
                     qrResult.session,
 
                 session_id:
-                    qrResult.session.session_id,
+                    qrResult.session
+                        .session_id,
 
                 qr_image:
                     qrResult.qrCode,
@@ -1585,6 +1804,10 @@ const createAttendanceSession = async (
                 qr_expired: false
             });
         }
+
+        // -------------------------------------------------
+        // LEGACY ACTIVE SESSION
+        // -------------------------------------------------
 
         const [legacyActiveRows] =
             await connection.query(
@@ -1644,18 +1867,14 @@ const createAttendanceSession = async (
                 });
             }
 
-            const existingSession =
-                existingSessionRows[0];
-
             const qrResult =
                 await rotateSessionQR(
-                    existingSession.session_id,
+                    existingSessionId,
                     connection
                 );
 
             return res.status(200).json({
                 success: true,
-
                 existing: true,
 
                 message:
@@ -1665,7 +1884,8 @@ const createAttendanceSession = async (
                     qrResult.session,
 
                 session_id:
-                    qrResult.session.session_id,
+                    qrResult.session
+                        .session_id,
 
                 qr_image:
                     qrResult.qrCode,
@@ -1682,6 +1902,10 @@ const createAttendanceSession = async (
                 qr_expired: false
             });
         }
+
+        // -------------------------------------------------
+        // NEW QR
+        // -------------------------------------------------
 
         qr_token =
             generateQRToken();
@@ -1713,7 +1937,8 @@ const createAttendanceSession = async (
                     qr_expires_at,
                     status
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 `,
                 [
                     subject_id,
@@ -1743,7 +1968,8 @@ const createAttendanceSession = async (
             );
 
         const createdSession =
-            createdRows[0] || null;
+            createdRows[0] ||
+            null;
 
         let qrCode = null;
 
@@ -1757,7 +1983,6 @@ const createAttendanceSession = async (
 
         return res.status(201).json({
             success: true,
-
             existing: false,
 
             message:
@@ -1807,7 +2032,8 @@ const createAttendanceSession = async (
             success: false,
             message:
                 "Failed to create attendance session.",
-            error: error.message
+            error:
+                error.message
         });
     } finally {
         if (connection) {
@@ -1818,6 +2044,22 @@ const createAttendanceSession = async (
 
 // =====================================================
 // GET ATTENDANCE SESSION QR
+//
+// GET /api/attendance-sessions/:id/qr
+//
+// DEFAULT:
+//
+// Returns CURRENT QR.
+//
+// It does NOT rotate a valid QR.
+//
+// If expired, it creates a new QR.
+//
+// FORCE:
+//
+// /api/attendance-sessions/:id/qr?force=true
+//
+// This explicitly creates a new QR.
 // =====================================================
 
 const getAttendanceSessionQR = async (
@@ -1828,7 +2070,9 @@ const getAttendanceSessionQR = async (
 
     try {
         const sessionId =
-            Number(req.params.id);
+            Number(
+                req.params.id
+            );
 
         if (
             !Number.isInteger(
@@ -1849,6 +2093,15 @@ const getAttendanceSessionQR = async (
 
         const staffId =
             await resolveStaffId(req);
+
+        const forceRefresh =
+            String(
+                req.query.force || ""
+            ).toLowerCase() ===
+                "true" ||
+            String(
+                req.query.force || ""
+            ) === "1";
 
         connection =
             await db.getConnection();
@@ -1878,7 +2131,9 @@ const getAttendanceSessionQR = async (
                 AND ats.staff_id = ?
             `;
 
-            params.push(staffId);
+            params.push(
+                staffId
+            );
         }
 
         const [rows] =
@@ -1901,7 +2156,8 @@ const getAttendanceSessionQR = async (
         if (
             String(
                 session.status || ""
-            ).toUpperCase() !== "ACTIVE"
+            ).toUpperCase() !==
+            "ACTIVE"
         ) {
             return res.status(400).json({
                 success: false,
@@ -1910,17 +2166,30 @@ const getAttendanceSessionQR = async (
             });
         }
 
+        // -------------------------------------------------
+        // IMPORTANT:
+        //
+        // Do NOT call rotateSessionQR() blindly.
+        //
+        // This keeps the same QR while it is valid.
+        // -------------------------------------------------
+
         const qrResult =
-            await rotateSessionQR(
+            await getCurrentOrRotateSessionQR(
                 sessionId,
-                connection
+                connection,
+                forceRefresh
             );
 
         return res.json({
             success: true,
 
+            session:
+                qrResult.session,
+
             session_id:
-                qrResult.session.session_id,
+                qrResult.session
+                    .session_id,
 
             qr_token:
                 qrResult.qrToken,
@@ -1932,19 +2201,24 @@ const getAttendanceSessionQR = async (
                 qrResult.qrCode,
 
             allocation_id:
-                qrResult.session.allocation_id,
+                qrResult.session
+                    .allocation_id,
 
             subject_id:
-                qrResult.session.subject_id,
+                qrResult.session
+                    .subject_id,
 
             staff_id:
-                qrResult.session.staff_id,
+                qrResult.session
+                    .staff_id,
 
             class_id:
-                qrResult.session.class_id,
+                qrResult.session
+                    .class_id,
 
             academic_year:
-                qrResult.session.academic_year,
+                qrResult.session
+                    .academic_year,
 
             semester:
                 qrResult.session
@@ -1953,22 +2227,28 @@ const getAttendanceSessionQR = async (
             qr_expires_at:
                 qrResult.qrExpiresAt,
 
-            qr_expired: false,
+            qr_expired:
+                false,
 
             status:
-                qrResult.session.status,
+                qrResult.session
+                    .status,
 
             subject_code:
-                qrResult.session.subject_code,
+                qrResult.session
+                    .subject_code,
 
             subject_name:
-                qrResult.session.subject_name,
+                qrResult.session
+                    .subject_name,
 
             class_year:
-                qrResult.session.class_year,
+                qrResult.session
+                    .class_year,
 
             class_section:
-                qrResult.session.class_section,
+                qrResult.session
+                    .class_section,
 
             department_name:
                 qrResult.session
@@ -1988,7 +2268,8 @@ const getAttendanceSessionQR = async (
             success: false,
             message:
                 "Failed to generate attendance QR.",
-            error: error.message
+            error:
+                error.message
         });
     } finally {
         if (connection) {
@@ -2007,7 +2288,9 @@ const updateAttendanceSession = async (
 ) => {
     try {
         const sessionId =
-            Number(req.params.id);
+            Number(
+                req.params.id
+            );
 
         if (
             !Number.isInteger(
@@ -2040,7 +2323,9 @@ const updateAttendanceSession = async (
                 [sessionId]
             );
 
-        if (existingRows.length === 0) {
+        if (
+            existingRows.length === 0
+        ) {
             return res.status(404).json({
                 success: false,
                 message:
@@ -2057,8 +2342,12 @@ const updateAttendanceSession = async (
         ) {
             if (
                 !existingStaffId ||
-                Number(existing.staff_id) !==
-                Number(existingStaffId)
+                Number(
+                    existing.staff_id
+                ) !==
+                Number(
+                    existingStaffId
+                )
             ) {
                 return res.status(403).json({
                     success: false,
@@ -2159,7 +2448,8 @@ const updateAttendanceSession = async (
             message:
                 "Attendance session updated successfully.",
             session:
-                rows[0] || null
+                rows[0] ||
+                null
         });
     } catch (error) {
         console.error(
@@ -2171,7 +2461,8 @@ const updateAttendanceSession = async (
             success: false,
             message:
                 "Failed to update attendance session.",
-            error: error.message
+            error:
+                error.message
         });
     }
 };
@@ -2186,7 +2477,9 @@ const closeAttendanceSession = async (
 ) => {
     try {
         const sessionId =
-            Number(req.params.id);
+            Number(
+                req.params.id
+            );
 
         if (
             !Number.isInteger(
@@ -2243,8 +2536,12 @@ const closeAttendanceSession = async (
         ) {
             if (
                 !staffId ||
-                Number(session.staff_id) !==
-                Number(staffId)
+                Number(
+                    session.staff_id
+                ) !==
+                Number(
+                    staffId
+                )
             ) {
                 return res.status(403).json({
                     success: false,
@@ -2257,7 +2554,8 @@ const closeAttendanceSession = async (
         if (
             String(
                 session.status
-            ).toUpperCase() === "CLOSED"
+            ).toUpperCase() ===
+            "CLOSED"
         ) {
             const [
                 alreadyClosedRows
@@ -2290,7 +2588,12 @@ const closeAttendanceSession = async (
                     end_time = COALESCE(
                         end_time,
                         CURTIME()
-                    )
+                    ),
+
+                    -- Invalidate the QR permanently
+                    qr_token = NULL,
+                    qr_expires_at = NULL
+
                 WHERE session_id = ?
                 `,
                 [sessionId]
@@ -2334,7 +2637,8 @@ const closeAttendanceSession = async (
             success: false,
             message:
                 "Failed to close attendance session.",
-            error: error.message
+            error:
+                error.message
         });
     }
 };
@@ -2352,7 +2656,9 @@ const deleteAttendanceSession = async (
 
     try {
         const sessionId =
-            Number(req.params.id);
+            Number(
+                req.params.id
+            );
 
         if (
             !Number.isInteger(
@@ -2443,7 +2749,8 @@ const deleteAttendanceSession = async (
             success: false,
             message:
                 "Failed to delete attendance session.",
-            error: error.message
+            error:
+                error.message
         });
     } finally {
         connection.release();
@@ -2457,12 +2764,28 @@ const deleteAttendanceSession = async (
 module.exports = {
     getAttendanceSessions,
     getAttendanceSessionById,
+
     getStaffSubjects,
     getStaffTimetable,
+
     getActiveSession,
+
     createAttendanceSession,
+
     getAttendanceSessionQR,
+
     updateAttendanceSession,
+
     closeAttendanceSession,
-    deleteAttendanceSession
+
+    deleteAttendanceSession,
+
+    // -------------------------------------------------
+    // IMPORTANT:
+    // Used by scanAttendance() to immediately create
+    // the next QR after a successful student scan.
+    // -------------------------------------------------
+
+    rotateSessionQR,
+    getCurrentOrRotateSessionQR
 };
