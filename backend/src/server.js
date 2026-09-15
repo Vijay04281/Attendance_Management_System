@@ -167,8 +167,6 @@ const corsOptions = {
   ],
 };
 
-// Preflight requests
-app.options("*", cors(corsOptions));
 
 // Apply CORS globally
 app.use(cors(corsOptions));
