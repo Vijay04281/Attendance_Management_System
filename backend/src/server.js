@@ -20,6 +20,43 @@ const subjectRoutes = require("./routes/subjectRoutes");
 const classRoutes = require("./routes/classRoutes");
 const assignmentRoutes = require("./routes/assignmentRoutes");
 const attendanceRoutes = require("./routes/attendanceRoutes");
+
+// =====================================================
+// ATTENDANCE SESSION ROUTES
+// =====================================================
+
+const attendanceSessionRoutes = require(
+    "./routes/attendanceSessionRoutes"
+);
+
+// =====================================================
+// ATTENDANCE SESSION CONTROLLER
+//
+// Used for compatibility endpoint:
+//
+// GET /api/subject-allocations/staff
+//
+// We reuse getStaffSubjects() instead of creating a
+// separate allocationRoutes.js file.
+// =====================================================
+
+const {
+    getStaffSubjects,
+} = require("./controllers/attendanceSessionController");
+
+// =====================================================
+// AUTH MIDDLEWARE
+// =====================================================
+
+const {
+    authenticateToken,
+    authorizeRoles,
+} = require("./middleware/authMiddleware");
+
+// =====================================================
+// OTHER ROUTES
+// =====================================================
+
 const timetableRoutes = require("./routes/timetableRoutes");
 const classTeacherRoutes = require("./routes/classTeacherRoutes");
 
@@ -56,34 +93,46 @@ const allowedOrigins = [
 
 // =====================================================
 // CORS CONFIGURATION
-// IMPORTANT:
-// CORS MUST BE BEFORE ALL API ROUTES
 // =====================================================
 
 const corsOptions = {
     origin: (origin, callback) => {
         console.log("------------------------------------------------");
         console.log("CORS CHECK");
-        console.log("REQUEST ORIGIN:", origin || "NO ORIGIN");
+        console.log(
+            "REQUEST ORIGIN:",
+            origin || "NO ORIGIN"
+        );
 
         // Allow requests without Origin
-        // Example: Postman, curl, server-to-server
         if (!origin) {
-            console.log("CORS ALLOWED: request has no origin");
+            console.log(
+                "CORS ALLOWED: request has no origin"
+            );
+
             return callback(null, true);
         }
 
         // Allow known origins
         if (allowedOrigins.includes(origin)) {
-            console.log("CORS ALLOWED:", origin);
+            console.log(
+                "CORS ALLOWED:",
+                origin
+            );
+
             return callback(null, true);
         }
 
         // Block unknown origins
-        console.error("CORS BLOCKED:", origin);
+        console.error(
+            "CORS BLOCKED:",
+            origin
+        );
 
         return callback(
-            new Error(`Origin not allowed by CORS: ${origin}`)
+            new Error(
+                `Origin not allowed by CORS: ${origin}`
+            )
         );
     },
 
@@ -111,7 +160,7 @@ const corsOptions = {
 
 // =====================================================
 // CORS
-// MUST COME BEFORE ROUTES
+// MUST COME BEFORE API ROUTES
 // =====================================================
 
 app.use(cors(corsOptions));
@@ -120,9 +169,11 @@ app.use(cors(corsOptions));
 // EXPRESS 5 SAFE PREFLIGHT HANDLER
 //
 // DO NOT USE:
+//
 // app.options("*", cors(...))
 //
 // Express 5 may throw:
+//
 // PathError: Missing parameter name at index 1: *
 // =====================================================
 
@@ -130,19 +181,31 @@ app.use((req, res, next) => {
     if (req.method === "OPTIONS") {
         console.log("------------------------------------------------");
         console.log("CORS PREFLIGHT REQUEST");
+
         console.log(
             "ORIGIN:",
             req.headers.origin || "NO ORIGIN"
         );
+
         console.log(
             "REQUEST METHOD:",
-            req.headers["access-control-request-method"]
+            req.headers[
+                "access-control-request-method"
+            ]
         );
+
         console.log(
             "REQUEST HEADERS:",
-            req.headers["access-control-request-headers"]
+            req.headers[
+                "access-control-request-headers"
+            ]
         );
-        console.log("URL:", req.originalUrl);
+
+        console.log(
+            "URL:",
+            req.originalUrl
+        );
+
         console.log("------------------------------------------------");
 
         return res.status(204).end();
@@ -177,10 +240,12 @@ app.use((req, res, next) => {
     console.log("REQUEST");
     console.log("METHOD :", req.method);
     console.log("URL    :", req.originalUrl);
+
     console.log(
         "ORIGIN :",
         req.headers.origin || "NO ORIGIN"
     );
+
     console.log("IP     :", req.ip);
     console.log("================================================");
 
@@ -196,8 +261,10 @@ app.get("/", (req, res) => {
         success: true,
         message:
             "Attendance Management System API is running",
+
         environment:
             process.env.NODE_ENV || "development",
+
         timestamp: new Date().toISOString(),
     });
 });
@@ -221,8 +288,11 @@ app.get("/health", (req, res) => {
 app.get("/api", (req, res) => {
     res.status(200).json({
         success: true,
-        message: "Attendance Management System API",
+        message:
+            "Attendance Management System API",
+
         version: "1.0.0",
+
         timestamp: new Date().toISOString(),
     });
 });
@@ -231,7 +301,11 @@ app.get("/api", (req, res) => {
 // ROUTE MOUNT HELPER
 // =====================================================
 
-const mountRoute = (path, route, name) => {
+const mountRoute = (
+    path,
+    route,
+    name
+) => {
     if (!route) {
         console.error(
             `❌ ${name} route is undefined`
@@ -320,14 +394,74 @@ mountRoute(
 // =====================================================
 // ATTENDANCE ROUTES
 //
-// IMPORTANT:
-// Mount this ONLY ONCE.
+// Mount ONLY ONCE.
 // =====================================================
 
 mountRoute(
     "/api/attendance",
     attendanceRoutes,
     "ATTENDANCE"
+);
+
+// =====================================================
+// ATTENDANCE SESSION ROUTES
+//
+// IMPORTANT:
+//
+// These routes provide:
+//
+// GET    /api/attendance-sessions
+// GET    /api/attendance-sessions/active
+// GET    /api/attendance-sessions/staff-subjects
+// GET    /api/attendance-sessions/staff-timetable
+// POST   /api/attendance-sessions
+// GET    /api/attendance-sessions/:id
+// GET    /api/attendance-sessions/:id/qr
+// PATCH  /api/attendance-sessions/:id/close
+// PUT    /api/attendance-sessions/:id
+// DELETE /api/attendance-sessions/:id
+// =====================================================
+
+mountRoute(
+    "/api/attendance-sessions",
+    attendanceSessionRoutes,
+    "ATTENDANCE SESSIONS"
+);
+
+// =====================================================
+// SUBJECT ALLOCATION COMPATIBILITY ROUTE
+//
+// FRONTEND CURRENTLY CALLS:
+//
+// GET /api/subject-allocations/staff
+//
+// We do NOT create allocationRoutes.js.
+//
+// Instead, we reuse:
+//
+// getStaffSubjects()
+//
+// from attendanceSessionController.js.
+//
+// This means both URLs can work:
+//
+// GET /api/attendance-sessions/staff-subjects
+//
+// GET /api/subject-allocations/staff
+// =====================================================
+
+app.get(
+    "/api/subject-allocations/staff",
+    authenticateToken,
+    authorizeRoles(
+        "STAFF",
+        "TEACHER"
+    ),
+    getStaffSubjects
+);
+
+console.log(
+    "✅ SUBJECT ALLOCATIONS compatibility route mounted at /api/subject-allocations/staff"
 );
 
 // =====================================================
@@ -348,6 +482,53 @@ mountRoute(
     "/api/class-teachers",
     classTeacherRoutes,
     "CLASS TEACHER"
+);
+
+// =====================================================
+// DEVELOPMENT ROUTE CHECK
+//
+// This does not expose private information.
+//
+// It simply confirms that the important API prefixes
+// were mounted.
+// =====================================================
+
+app.get(
+    "/api/route-check",
+    (req, res) => {
+        res.status(200).json({
+            success: true,
+
+            message:
+                "Attendance API routes are mounted",
+
+            routes: {
+                attendance:
+                    "/api/attendance",
+
+                attendanceSessions:
+                    "/api/attendance-sessions",
+
+                activeSession:
+                    "/api/attendance-sessions/active",
+
+                staffSubjects:
+                    "/api/attendance-sessions/staff-subjects",
+
+                subjectAllocationsStaff:
+                    "/api/subject-allocations/staff",
+
+                timetable:
+                    "/api/timetable",
+
+                classTeachers:
+                    "/api/class-teachers",
+            },
+
+            timestamp:
+                new Date().toISOString(),
+        });
+    }
 );
 
 // =====================================================
@@ -373,75 +554,114 @@ app.use((req, res) => {
 // GLOBAL ERROR HANDLER
 // =====================================================
 
-app.use((err, req, res, next) => {
-    console.error("================================================");
-    console.error("GLOBAL ERROR");
-    console.error("================================================");
-    console.error("Message:", err.message);
-    console.error("Method:", req.method);
-    console.error("URL:", req.originalUrl);
-    console.error(
-        "Origin:",
-        req.headers.origin || "NO ORIGIN"
-    );
-    console.error("================================================");
-
-    // -------------------------------------------------
-    // Re-apply CORS headers for allowed origins
-    // -------------------------------------------------
-
-    const requestOrigin = req.headers.origin;
-
-    if (
-        requestOrigin &&
-        allowedOrigins.includes(requestOrigin)
-    ) {
-        res.header(
-            "Access-Control-Allow-Origin",
-            requestOrigin
+app.use(
+    (err, req, res, next) => {
+        console.error(
+            "================================================"
         );
 
-        res.header(
-            "Access-Control-Allow-Credentials",
-            "true"
+        console.error(
+            "GLOBAL ERROR"
         );
 
-        res.header(
-            "Vary",
-            "Origin"
+        console.error(
+            "================================================"
         );
-    }
 
-    // -------------------------------------------------
-    // CORS ERROR
-    // -------------------------------------------------
+        console.error(
+            "Message:",
+            err.message
+        );
 
-    if (
-        err.message &&
-        err.message.includes(
-            "Origin not allowed by CORS"
-        )
-    ) {
-        return res.status(403).json({
+        console.error(
+            "Method:",
+            req.method
+        );
+
+        console.error(
+            "URL:",
+            req.originalUrl
+        );
+
+        console.error(
+            "Origin:",
+            req.headers.origin ||
+                "NO ORIGIN"
+        );
+
+        console.error(
+            "================================================"
+        );
+
+        // -------------------------------------------------
+        // Re-apply CORS headers for allowed origins
+        // -------------------------------------------------
+
+        const requestOrigin =
+            req.headers.origin;
+
+        if (
+            requestOrigin &&
+            allowedOrigins.includes(
+                requestOrigin
+            )
+        ) {
+            res.header(
+                "Access-Control-Allow-Origin",
+                requestOrigin
+            );
+
+            res.header(
+                "Access-Control-Allow-Credentials",
+                "true"
+            );
+
+            res.header(
+                "Vary",
+                "Origin"
+            );
+        }
+
+        // -------------------------------------------------
+        // CORS ERROR
+        // -------------------------------------------------
+
+        if (
+            err.message &&
+            err.message.includes(
+                "Origin not allowed by CORS"
+            )
+        ) {
+            return res.status(403).json({
+                success: false,
+
+                message:
+                    "CORS origin not allowed",
+
+                origin:
+                    requestOrigin ||
+                    null,
+            });
+        }
+
+        // -------------------------------------------------
+        // GENERAL SERVER ERROR
+        // -------------------------------------------------
+
+        return res.status(500).json({
             success: false,
-            message: "CORS origin not allowed",
-            origin: requestOrigin || null,
+
+            message:
+                "Internal server error",
+
+            error:
+                process.env.NODE_ENV ===
+                "production"
+                    ? undefined
+                    : err.message,
         });
     }
-
-    // -------------------------------------------------
-    // GENERAL SERVER ERROR
-    // -------------------------------------------------
-
-    return res.status(500).json({
-        success: false,
-        message: "Internal server error",
-        error:
-            process.env.NODE_ENV === "production"
-                ? undefined
-                : err.message,
-    });
-});
+);
 
 // =====================================================
 // START SERVER
@@ -454,11 +674,17 @@ const startServer = () => {
             "0.0.0.0",
             () => {
                 console.log("");
-                console.log("================================================");
+                console.log(
+                    "================================================"
+                );
+
                 console.log(
                     "ATTENDANCE MANAGEMENT SYSTEM"
                 );
-                console.log("================================================");
+
+                console.log(
+                    "================================================"
+                );
 
                 console.log(
                     `Server running on port: ${PORT}`
@@ -472,6 +698,7 @@ const startServer = () => {
                 );
 
                 console.log("");
+
                 console.log(
                     "Allowed CORS Origins:"
                 );
@@ -485,27 +712,77 @@ const startServer = () => {
                 );
 
                 console.log("");
-                console.log("API Base URL:");
+
+                console.log(
+                    "API Base URL:"
+                );
 
                 console.log(
                     `  http://localhost:${PORT}/api`
                 );
 
                 console.log("");
-                console.log("Health:");
+
+                console.log(
+                    "Health:"
+                );
 
                 console.log(
                     `  http://localhost:${PORT}/health`
                 );
 
                 console.log("");
-                console.log("Attendance API:");
+
+                console.log(
+                    "Attendance API:"
+                );
 
                 console.log(
                     `  http://localhost:${PORT}/api/attendance`
                 );
 
                 console.log("");
+
+                console.log(
+                    "Attendance Sessions API:"
+                );
+
+                console.log(
+                    `  http://localhost:${PORT}/api/attendance-sessions`
+                );
+
+                console.log("");
+
+                console.log(
+                    "Active Attendance Session:"
+                );
+
+                console.log(
+                    `  http://localhost:${PORT}/api/attendance-sessions/active`
+                );
+
+                console.log("");
+
+                console.log(
+                    "Staff Subjects:"
+                );
+
+                console.log(
+                    `  http://localhost:${PORT}/api/attendance-sessions/staff-subjects`
+                );
+
+                console.log("");
+
+                console.log(
+                    "Subject Allocations Compatibility:"
+                );
+
+                console.log(
+                    `  http://localhost:${PORT}/api/subject-allocations/staff`
+                );
+
+                console.log("");
+
                 console.log(
                     "Student Attendance API:"
                 );
@@ -515,9 +792,29 @@ const startServer = () => {
                 );
 
                 console.log("");
-                console.log("================================================");
-                console.log("SERVER READY");
-                console.log("================================================");
+
+                console.log(
+                    "Route Check:"
+                );
+
+                console.log(
+                    `  http://localhost:${PORT}/api/route-check`
+                );
+
+                console.log("");
+
+                console.log(
+                    "================================================"
+                );
+
+                console.log(
+                    "SERVER READY"
+                );
+
+                console.log(
+                    "================================================"
+                );
+
                 console.log("");
             }
         );
