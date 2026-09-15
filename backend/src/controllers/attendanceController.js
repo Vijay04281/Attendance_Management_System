@@ -21,8 +21,18 @@ const db = require("../config/db");
 //      ↓
 // attendance.student_id
 //
-// This controller always resolves the real student_id
-// from the authenticated JWT for student operations.
+// IMPORTANT DATABASE NOTE
+//
+// The students table DOES NOT contain student_code.
+//
+// Therefore this controller uses:
+//     NULL AS student_code
+//
+// where a student_code field is useful for frontend
+// compatibility.
+//
+// The real student identity is:
+//     students.student_id
 // =====================================================
 
 
@@ -119,9 +129,17 @@ async function getStaffByRequest(req) {
 // =====================================================
 // GET LOGGED-IN STUDENT
 //
-// NEVER assume users.user_id == students.student_id.
+// NEVER assume:
 //
-// This is the main fix for the Student Dashboard.
+// users.user_id == students.student_id
+//
+// Correct relationship:
+//
+// users.user_id
+//      ↓
+// students.user_id
+//      ↓
+// students.student_id
 // =====================================================
 
 async function getLoggedInStudent(req) {
@@ -136,15 +154,20 @@ async function getLoggedInStudent(req) {
         SELECT
             s.student_id,
             s.user_id,
-            s.student_code,
+
+            NULL AS student_code,
+
             s.name,
             s.email,
             s.phone,
             s.department,
             s.year,
             s.section
+
         FROM students s
+
         WHERE s.user_id = ?
+
         LIMIT 1
         `,
         [userId]
@@ -215,7 +238,8 @@ async function getSessionAllocation(session) {
         return null;
     }
 
-    const allocationId = session.allocation_id;
+    const allocationId =
+        session.allocation_id;
 
     if (allocationId) {
         const [rows] = await db.query(
@@ -243,7 +267,8 @@ async function getSessionAllocation(session) {
                 ON c.class_id = sa.class_id
 
             LEFT JOIN departments d
-                ON d.department_id = c.department_id
+                ON d.department_id =
+                   c.department_id
 
             WHERE sa.allocation_id = ?
 
@@ -258,7 +283,7 @@ async function getSessionAllocation(session) {
     }
 
     // -------------------------------------------------
-    // Fallback using session subject/class
+    // FALLBACK USING SESSION SUBJECT + CLASS
     // -------------------------------------------------
 
     const [rows] = await db.query(
@@ -286,13 +311,15 @@ async function getSessionAllocation(session) {
             ON c.class_id = sa.class_id
 
         LEFT JOIN departments d
-            ON d.department_id = c.department_id
+            ON d.department_id =
+               c.department_id
 
         WHERE
             sa.subject_id = ?
             AND sa.class_id = ?
 
-        ORDER BY sa.allocation_id DESC
+        ORDER BY
+            sa.allocation_id DESC
 
         LIMIT 1
         `,
@@ -397,39 +424,47 @@ async function validateStudentForSession(
 
     // -------------------------------------------------
     // DEPARTMENT
-    //
-    // Student department may contain either:
-    // department name OR department code.
-    // Therefore compare both.
     // -------------------------------------------------
 
     if (student.department) {
-        const [departments] = await db.query(
-            `
-            SELECT
-                department_id,
-                department_name,
-                department_code
-            FROM departments
-            WHERE
-                department_id = ?
-                OR LOWER(TRIM(department_name)) = ?
-                OR LOWER(TRIM(department_code)) = ?
-            LIMIT 1
-            `,
-            [
-                allocation.department_id,
-                normalize(student.department),
-                normalize(student.department),
-            ]
-        );
+        const [departments] =
+            await db.query(
+                `
+                SELECT
+                    department_id,
+                    department_name,
+                    department_code
+
+                FROM departments
+
+                WHERE
+                    department_id = ?
+
+                    OR LOWER(TRIM(department_name)) = ?
+
+                    OR LOWER(TRIM(department_code)) = ?
+
+                LIMIT 1
+                `,
+                [
+                    allocation.department_id,
+                    normalize(
+                        student.department
+                    ),
+                    normalize(
+                        student.department
+                    ),
+                ]
+            );
 
         if (departments.length) {
             const department =
                 departments[0];
 
             const studentDepartment =
-                normalize(student.department);
+                normalize(
+                    student.department
+                );
 
             const validDepartment =
                 studentDepartment ===
@@ -483,10 +518,13 @@ async function checkStaffSubjectClassAllocation(
         `
         SELECT
             sa.*,
+
             sub.subject_code,
             sub.subject_name,
+
             c.year AS class_year,
             c.section AS class_section,
+
             d.department_name
 
         FROM subject_allocations sa
@@ -498,7 +536,8 @@ async function checkStaffSubjectClassAllocation(
             ON c.class_id = sa.class_id
 
         LEFT JOIN departments d
-            ON d.department_id = c.department_id
+            ON d.department_id =
+               c.department_id
 
         WHERE
             sa.allocation_id = ?
@@ -582,7 +621,10 @@ async function validateStaffForSession(
 // GET MY SUBJECT CLASSES
 // =====================================================
 
-async function getMySubjectClasses(req, res) {
+async function getMySubjectClasses(
+    req,
+    res
+) {
     try {
         const staffId =
             await getLoggedInStaffId(req);
@@ -617,13 +659,16 @@ async function getMySubjectClasses(req, res) {
             FROM subject_allocations sa
 
             LEFT JOIN subjects sub
-                ON sub.subject_id = sa.subject_id
+                ON sub.subject_id =
+                   sa.subject_id
 
             LEFT JOIN classes c
-                ON c.class_id = sa.class_id
+                ON c.class_id =
+                   sa.class_id
 
             LEFT JOIN departments d
-                ON d.department_id = c.department_id
+                ON d.department_id =
+                   c.department_id
 
             WHERE sa.staff_id = ?
 
@@ -661,7 +706,10 @@ async function getMySubjectClasses(req, res) {
 // GET MY SUBJECT STUDENTS
 // =====================================================
 
-async function getMySubjectStudents(req, res) {
+async function getMySubjectStudents(
+    req,
+    res
+) {
     try {
         const staffId =
             await getLoggedInStaffId(req);
@@ -688,7 +736,8 @@ async function getMySubjectStudents(req, res) {
             });
         }
 
-        const classId = Number(class_id);
+        const classId =
+            Number(class_id);
 
         if (!Number.isInteger(classId)) {
             return res.status(400).json({
@@ -712,7 +761,8 @@ async function getMySubjectStudents(req, res) {
             if (!result.valid) {
                 return res.status(403).json({
                     success: false,
-                    message: result.message,
+                    message:
+                        result.message,
                 });
             }
 
@@ -724,6 +774,7 @@ async function getMySubjectStudents(req, res) {
                     `
                     SELECT *
                     FROM subject_allocations
+
                     WHERE
                         staff_id = ?
                         AND class_id = ?
@@ -732,14 +783,19 @@ async function getMySubjectStudents(req, res) {
                                 ? "AND subject_id = ?"
                                 : ""
                         }
-                    ORDER BY allocation_id DESC
+
+                    ORDER BY
+                        allocation_id DESC
+
                     LIMIT 1
                     `,
                     subject_id
                         ? [
                               staffId,
                               classId,
-                              Number(subject_id),
+                              Number(
+                                  subject_id
+                              ),
                           ]
                         : [
                               staffId,
@@ -759,27 +815,30 @@ async function getMySubjectStudents(req, res) {
                 allocationRows[0];
         }
 
-        const [classRows] = await db.query(
-            `
-            SELECT
-                c.class_id,
-                c.year,
-                c.section,
-                c.department_id,
-                d.department_name,
-                d.department_code
+        const [classRows] =
+            await db.query(
+                `
+                SELECT
+                    c.class_id,
+                    c.year,
+                    c.section,
+                    c.department_id,
 
-            FROM classes c
+                    d.department_name,
+                    d.department_code
 
-            LEFT JOIN departments d
-                ON d.department_id = c.department_id
+                FROM classes c
 
-            WHERE c.class_id = ?
+                LEFT JOIN departments d
+                    ON d.department_id =
+                       c.department_id
 
-            LIMIT 1
-            `,
-            [classId]
-        );
+                WHERE c.class_id = ?
+
+                LIMIT 1
+                `,
+                [classId]
+            );
 
         if (!classRows.length) {
             return res.status(404).json({
@@ -792,49 +851,58 @@ async function getMySubjectStudents(req, res) {
         const classInfo =
             classRows[0];
 
-        const [students] = await db.query(
-            `
-            SELECT
-                s.student_id,
-                s.user_id,
-                s.student_code,
-                s.name,
-                s.email,
-                s.phone,
-                s.department,
-                s.year,
-                s.section
+        const [students] =
+            await db.query(
+                `
+                SELECT
+                    s.student_id,
+                    s.user_id,
 
-            FROM students s
+                    NULL AS student_code,
 
-            WHERE
-                s.year = ?
+                    s.name,
+                    s.email,
+                    s.phone,
+                    s.department,
+                    s.year,
+                    s.section
 
-                AND LOWER(TRIM(s.section)) =
-                    LOWER(TRIM(?))
+                FROM students s
 
-                AND (
-                    LOWER(TRIM(s.department)) =
+                WHERE
+                    s.year = ?
+
+                    AND LOWER(TRIM(s.section)) =
                         LOWER(TRIM(?))
-                    OR
-                    LOWER(TRIM(s.department)) =
-                        LOWER(TRIM(?))
-                )
 
-            ORDER BY s.name ASC
-            `,
-            [
-                classInfo.year,
-                classInfo.section,
-                classInfo.department_name || "",
-                classInfo.department_code || "",
-            ]
-        );
+                    AND (
+                        LOWER(TRIM(s.department)) =
+                            LOWER(TRIM(?))
+
+                        OR
+
+                        LOWER(TRIM(s.department)) =
+                            LOWER(TRIM(?))
+                    )
+
+                ORDER BY
+                    s.name ASC
+                `,
+                [
+                    classInfo.year,
+                    classInfo.section,
+                    classInfo.department_name ||
+                        "",
+                    classInfo.department_code ||
+                        "",
+                ]
+            );
 
         return res.json({
             success: true,
             students,
-            total_students: students.length,
+            total_students:
+                students.length,
             allocation,
             class: classInfo,
         });
@@ -858,38 +926,45 @@ async function getMySubjectStudents(req, res) {
 // GET ALL ATTENDANCE
 // =====================================================
 
-async function getAttendance(req, res) {
+async function getAttendance(
+    req,
+    res
+) {
     try {
-        const [rows] = await db.query(
-            `
-            SELECT
-                a.*,
+        const [rows] =
+            await db.query(
+                `
+                SELECT
+                    a.*,
 
-                s.student_code,
-                s.name AS student_name,
-                s.email AS student_email,
+                    NULL AS student_code,
 
-                ats.session_id,
-                ats.subject_id,
-                ats.staff_id,
-                ats.class_id,
-                ats.academic_year,
-                ats.semester,
-                ats.session_date,
-                ats.status AS session_status
+                    s.name AS student_name,
+                    s.email AS student_email,
 
-            FROM attendance a
+                    ats.session_id,
+                    ats.subject_id,
+                    ats.staff_id,
+                    ats.class_id,
+                    ats.academic_year,
+                    ats.semester,
+                    ats.session_date,
+                    ats.status AS session_status
 
-            LEFT JOIN students s
-                ON s.student_id = a.student_id
+                FROM attendance a
 
-            LEFT JOIN attendance_sessions ats
-                ON ats.session_id = a.session_id
+                LEFT JOIN students s
+                    ON s.student_id =
+                       a.student_id
 
-            ORDER BY
-                a.attendance_id DESC
-            `
-        );
+                LEFT JOIN attendance_sessions ats
+                    ON ats.session_id =
+                       a.session_id
+
+                ORDER BY
+                    a.attendance_id DESC
+                `
+            );
 
         return res.json({
             success: true,
@@ -917,7 +992,10 @@ async function getAttendance(req, res) {
 // GET ATTENDANCE BY ID
 // =====================================================
 
-async function getAttendanceById(req, res) {
+async function getAttendanceById(
+    req,
+    res
+) {
     try {
         const attendanceId =
             Number(req.params.id);
@@ -930,37 +1008,42 @@ async function getAttendanceById(req, res) {
             });
         }
 
-        const [rows] = await db.query(
-            `
-            SELECT
-                a.*,
+        const [rows] =
+            await db.query(
+                `
+                SELECT
+                    a.*,
 
-                s.student_code,
-                s.name AS student_name,
-                s.email AS student_email,
+                    NULL AS student_code,
 
-                ats.subject_id,
-                ats.staff_id,
-                ats.class_id,
-                ats.academic_year,
-                ats.semester,
-                ats.session_date,
-                ats.status AS session_status
+                    s.name AS student_name,
+                    s.email AS student_email,
 
-            FROM attendance a
+                    ats.subject_id,
+                    ats.staff_id,
+                    ats.class_id,
+                    ats.academic_year,
+                    ats.semester,
+                    ats.session_date,
+                    ats.status AS session_status
 
-            LEFT JOIN students s
-                ON s.student_id = a.student_id
+                FROM attendance a
 
-            LEFT JOIN attendance_sessions ats
-                ON ats.session_id = a.session_id
+                LEFT JOIN students s
+                    ON s.student_id =
+                       a.student_id
 
-            WHERE a.attendance_id = ?
+                LEFT JOIN attendance_sessions ats
+                    ON ats.session_id =
+                       a.session_id
 
-            LIMIT 1
-            `,
-            [attendanceId]
-        );
+                WHERE
+                    a.attendance_id = ?
+
+                LIMIT 1
+                `,
+                [attendanceId]
+            );
 
         if (!rows.length) {
             return res.status(404).json({
@@ -1029,13 +1112,16 @@ async function getAttendanceBySession(
                 FROM attendance_sessions ats
 
                 LEFT JOIN subjects sub
-                    ON sub.subject_id = ats.subject_id
+                    ON sub.subject_id =
+                       ats.subject_id
 
                 LEFT JOIN classes c
-                    ON c.class_id = ats.class_id
+                    ON c.class_id =
+                       ats.class_id
 
                 LEFT JOIN departments d
-                    ON d.department_id = c.department_id
+                    ON d.department_id =
+                       c.department_id
 
                 WHERE ats.session_id = ?
 
@@ -1056,7 +1142,7 @@ async function getAttendanceBySession(
             sessionRows[0];
 
         // -------------------------------------------------
-        // Student access
+        // STUDENT ACCESS
         // -------------------------------------------------
 
         if (
@@ -1089,44 +1175,58 @@ async function getAttendanceBySession(
             }
         }
 
-        const [records] = await db.query(
-            `
-            SELECT
-                a.*,
+        const [records] =
+            await db.query(
+                `
+                SELECT
+                    a.*,
 
-                s.student_id,
-                s.student_code,
-                s.name AS student_name,
-                s.email AS student_email,
-                s.phone AS student_phone,
-                s.department,
-                s.year,
-                s.section
+                    s.student_id,
 
-            FROM attendance a
+                    NULL AS student_code,
 
-            INNER JOIN students s
-                ON s.student_id = a.student_id
+                    s.name AS student_name,
+                    s.email AS student_email,
+                    s.phone AS student_phone,
+                    s.department,
+                    s.year,
+                    s.section
 
-            WHERE a.session_id = ?
+                FROM attendance a
 
-            ORDER BY
-                s.name ASC,
-                a.attendance_id ASC
-            `,
-            [sessionId]
-        );
+                INNER JOIN students s
+                    ON s.student_id =
+                       a.student_id
+
+                WHERE
+                    a.session_id = ?
+
+                ORDER BY
+                    s.name ASC,
+                    a.attendance_id ASC
+                `,
+                [sessionId]
+            );
 
         const [countRows] =
             await db.query(
                 `
                 SELECT
-                    COUNT(DISTINCT a.student_id) AS attended
+                    COUNT(
+                        DISTINCT a.student_id
+                    ) AS attended
+
                 FROM attendance a
+
                 WHERE
                     a.session_id = ?
-                    AND UPPER(TRIM(a.status))
-                        IN ('PRESENT', 'LATE')
+
+                    AND UPPER(
+                        TRIM(a.status)
+                    ) IN (
+                        'PRESENT',
+                        'LATE'
+                    )
                 `,
                 [sessionId]
             );
@@ -1137,7 +1237,7 @@ async function getAttendanceBySession(
             );
 
         // -------------------------------------------------
-        // Calculate total students in session class
+        // TOTAL STUDENTS
         // -------------------------------------------------
 
         let totalStudents = 0;
@@ -1151,6 +1251,7 @@ async function getAttendanceBySession(
                         c.year,
                         c.section,
                         c.department_id,
+
                         d.department_name,
                         d.department_code
 
@@ -1171,37 +1272,52 @@ async function getAttendanceBySession(
                 const c =
                     classRows[0];
 
-                const [studentCountRows] =
-                    await db.query(
-                        `
-                        SELECT
-                            COUNT(*) AS total_students
+                const [
+                    studentCountRows,
+                ] = await db.query(
+                    `
+                    SELECT
+                        COUNT(*) AS total_students
 
-                        FROM students s
+                    FROM students s
 
-                        WHERE
-                            s.year = ?
+                    WHERE
+                        s.year = ?
 
-                            AND LOWER(TRIM(s.section)) =
-                                LOWER(TRIM(?))
-
-                            AND (
-                                LOWER(TRIM(s.department)) =
-                                    LOWER(TRIM(?))
-
-                                OR
-
-                                LOWER(TRIM(s.department)) =
-                                    LOWER(TRIM(?))
+                        AND LOWER(
+                            TRIM(s.section)
+                        ) =
+                            LOWER(
+                                TRIM(?)
                             )
-                        `,
-                        [
-                            c.year,
-                            c.section,
-                            c.department_name || "",
-                            c.department_code || "",
-                        ]
-                    );
+
+                        AND (
+                            LOWER(
+                                TRIM(s.department)
+                            ) =
+                                LOWER(
+                                    TRIM(?)
+                                )
+
+                            OR
+
+                            LOWER(
+                                TRIM(s.department)
+                            ) =
+                                LOWER(
+                                    TRIM(?)
+                                )
+                        )
+                    `,
+                    [
+                        c.year,
+                        c.section,
+                        c.department_name ||
+                            "",
+                        c.department_code ||
+                            "",
+                    ]
+                );
 
                 totalStudents =
                     Number(
@@ -1211,7 +1327,10 @@ async function getAttendanceBySession(
             }
         }
 
-        // Fallback
+        // -------------------------------------------------
+        // FALLBACK
+        // -------------------------------------------------
+
         if (!totalStudents) {
             totalStudents =
                 Number(records.length);
@@ -1302,13 +1421,15 @@ async function getAttendanceCountBySession(
                 FROM attendance_sessions ats
 
                 LEFT JOIN classes c
-                    ON c.class_id = ats.class_id
+                    ON c.class_id =
+                       ats.class_id
 
                 LEFT JOIN departments d
                     ON d.department_id =
                        c.department_id
 
-                WHERE ats.session_id = ?
+                WHERE
+                    ats.session_id = ?
 
                 LIMIT 1
                 `,
@@ -1348,23 +1469,29 @@ async function getAttendanceCountBySession(
             await db.query(
                 `
                 SELECT
-                    COUNT(DISTINCT a.student_id)
-                        AS attended
+                    COUNT(
+                        DISTINCT a.student_id
+                    ) AS attended
 
                 FROM attendance a
 
                 WHERE
                     a.session_id = ?
 
-                    AND UPPER(TRIM(a.status))
-                        IN ('PRESENT', 'LATE')
+                    AND UPPER(
+                        TRIM(a.status)
+                    ) IN (
+                        'PRESENT',
+                        'LATE'
+                    )
                 `,
                 [sessionId]
             );
 
         const present =
             Number(
-                attendanceRows[0]?.attended || 0
+                attendanceRows[0]
+                    ?.attended || 0
             );
 
         // -------------------------------------------------
@@ -1374,37 +1501,52 @@ async function getAttendanceCountBySession(
         let totalStudents = 0;
 
         if (session.class_id) {
-            const [studentsRows] =
-                await db.query(
-                    `
-                    SELECT
-                        COUNT(*) AS total_students
+            const [
+                studentsRows,
+            ] = await db.query(
+                `
+                SELECT
+                    COUNT(*) AS total_students
 
-                    FROM students s
+                FROM students s
 
-                    WHERE
-                        s.year = ?
+                WHERE
+                    s.year = ?
 
-                        AND LOWER(TRIM(s.section)) =
-                            LOWER(TRIM(?))
-
-                        AND (
-                            LOWER(TRIM(s.department)) =
-                                LOWER(TRIM(?))
-
-                            OR
-
-                            LOWER(TRIM(s.department)) =
-                                LOWER(TRIM(?))
+                    AND LOWER(
+                        TRIM(s.section)
+                    ) =
+                        LOWER(
+                            TRIM(?)
                         )
-                    `,
-                    [
-                        session.class_year,
-                        session.class_section,
-                        session.department_name || "",
-                        session.department_code || "",
-                    ]
-                );
+
+                    AND (
+                        LOWER(
+                            TRIM(s.department)
+                        ) =
+                            LOWER(
+                                TRIM(?)
+                            )
+
+                        OR
+
+                        LOWER(
+                            TRIM(s.department)
+                        ) =
+                            LOWER(
+                                TRIM(?)
+                            )
+                    )
+                `,
+                [
+                    session.class_year,
+                    session.class_section,
+                    session.department_name ||
+                        "",
+                    session.department_code ||
+                        "",
+                ]
+            );
 
             totalStudents =
                 Number(
@@ -1418,39 +1560,52 @@ async function getAttendanceCountBySession(
         // -------------------------------------------------
 
         if (!totalStudents) {
-            const [allocationStudents] =
-                await db.query(
-                    `
-                    SELECT
-                        COUNT(*) AS total_students
+            const [
+                allocationStudents,
+            ] = await db.query(
+                `
+                SELECT
+                    COUNT(*) AS total_students
 
-                    FROM students s
+                FROM students s
 
-                    INNER JOIN classes c
-                        ON c.class_id = ?
+                INNER JOIN classes c
+                    ON c.class_id = ?
 
-                    LEFT JOIN departments d
-                        ON d.department_id =
-                           c.department_id
+                LEFT JOIN departments d
+                    ON d.department_id =
+                       c.department_id
 
-                    WHERE
-                        s.year = c.year
+                WHERE
+                    s.year = c.year
 
-                        AND LOWER(TRIM(s.section)) =
-                            LOWER(TRIM(c.section))
-
-                        AND (
-                            LOWER(TRIM(s.department)) =
-                                LOWER(TRIM(d.department_name))
-
-                            OR
-
-                            LOWER(TRIM(s.department)) =
-                                LOWER(TRIM(d.department_code))
+                    AND LOWER(
+                        TRIM(s.section)
+                    ) =
+                        LOWER(
+                            TRIM(c.section)
                         )
-                    `,
-                    [session.class_id]
-                );
+
+                    AND (
+                        LOWER(
+                            TRIM(s.department)
+                        ) =
+                            LOWER(
+                                TRIM(d.department_name)
+                            )
+
+                        OR
+
+                        LOWER(
+                            TRIM(s.department)
+                        ) =
+                            LOWER(
+                                TRIM(d.department_code)
+                            )
+                    )
+                `,
+                [session.class_id]
+            );
 
             totalStudents =
                 Number(
@@ -1510,14 +1665,6 @@ async function getAttendanceCountBySession(
 // =====================================================
 // GET ATTENDANCE BY STUDENT
 // =====================================================
-//
-// IMPORTANT:
-//
-// This endpoint expects students.student_id.
-//
-// Student Dashboard should preferably use /my.
-//
-// =====================================================
 
 async function getAttendanceByStudent(
     req,
@@ -1526,6 +1673,10 @@ async function getAttendanceByStudent(
     try {
         let studentId =
             Number(req.params.studentId);
+
+        // -------------------------------------------------
+        // STUDENT CAN ONLY SEE OWN ATTENDANCE
+        // -------------------------------------------------
 
         if (
             getUserRole(req) ===
@@ -1542,10 +1693,6 @@ async function getAttendanceByStudent(
                 });
             }
 
-            // -------------------------------------------------
-            // STUDENT CAN ONLY SEE OWN ATTENDANCE
-            // -------------------------------------------------
-
             studentId =
                 Number(
                     loggedInStudent.student_id
@@ -1560,45 +1707,52 @@ async function getAttendanceByStudent(
             });
         }
 
-        const [rows] = await db.query(
-            `
-            SELECT
-                a.*,
+        const [rows] =
+            await db.query(
+                `
+                SELECT
+                    a.*,
 
-                s.student_id,
-                s.student_code,
-                s.name AS student_name,
+                    s.student_id,
 
-                ats.subject_id,
-                ats.staff_id,
-                ats.class_id,
-                ats.allocation_id,
-                ats.academic_year,
-                ats.semester,
-                ats.session_date,
-                ats.start_time,
-                ats.end_time,
-                ats.status AS session_status
+                    NULL AS student_code,
 
-            FROM attendance a
+                    s.name AS student_name,
 
-            INNER JOIN students s
-                ON s.student_id = a.student_id
-
-            LEFT JOIN attendance_sessions ats
-                ON ats.session_id = a.session_id
-
-            WHERE a.student_id = ?
-
-            ORDER BY
-                COALESCE(
+                    ats.subject_id,
+                    ats.staff_id,
+                    ats.class_id,
+                    ats.allocation_id,
+                    ats.academic_year,
+                    ats.semester,
                     ats.session_date,
-                    DATE(a.scanned_at)
-                ) DESC,
-                a.attendance_id DESC
-            `,
-            [studentId]
-        );
+                    ats.start_time,
+                    ats.end_time,
+                    ats.status AS session_status
+
+                FROM attendance a
+
+                INNER JOIN students s
+                    ON s.student_id =
+                       a.student_id
+
+                LEFT JOIN attendance_sessions ats
+                    ON ats.session_id =
+                       a.session_id
+
+                WHERE
+                    a.student_id = ?
+
+                ORDER BY
+                    COALESCE(
+                        ats.session_date,
+                        DATE(a.scanned_at)
+                    ) DESC,
+
+                    a.attendance_id DESC
+                `,
+                [studentId]
+            );
 
         const present =
             rows.filter(
@@ -1641,7 +1795,8 @@ async function getAttendanceByStudent(
             attendance_records: rows,
 
             total: rows.length,
-            total_students: rows.length,
+            total_students:
+                rows.length,
 
             present,
             late,
@@ -1679,16 +1834,24 @@ async function getAttendanceByStudent(
 // GET MY ATTENDANCE
 // =====================================================
 //
-// NEW RELIABLE STUDENT ENDPOINT
-//
 // GET /api/attendance/my
 //
-// JWT → users.user_id → students.student_id
+// JWT
+//  ↓
+// users.user_id
+//  ↓
+// students.user_id
+//  ↓
+// students.student_id
+//  ↓
+// attendance.student_id
 //
-// The frontend no longer needs to know student_id.
 // =====================================================
 
-async function getMyAttendance(req, res) {
+async function getMyAttendance(
+    req,
+    res
+) {
     try {
         const student =
             await getLoggedInStudent(req);
@@ -1704,51 +1867,63 @@ async function getMyAttendance(req, res) {
         const studentId =
             Number(student.student_id);
 
-        const [rows] = await db.query(
-            `
-            SELECT
-                a.*,
+        const [rows] =
+            await db.query(
+                `
+                SELECT
+                    a.*,
 
-                s.student_id,
-                s.student_code,
-                s.name AS student_name,
+                    s.student_id,
 
-                ats.subject_id,
-                ats.staff_id,
-                ats.class_id,
-                ats.allocation_id,
-                ats.academic_year,
-                ats.semester,
-                ats.session_date,
-                ats.start_time,
-                ats.end_time,
-                ats.status AS session_status,
+                    NULL AS student_code,
 
-                sub.subject_code,
-                sub.subject_name
+                    s.name AS student_name,
 
-            FROM attendance a
-
-            INNER JOIN students s
-                ON s.student_id = a.student_id
-
-            LEFT JOIN attendance_sessions ats
-                ON ats.session_id = a.session_id
-
-            LEFT JOIN subjects sub
-                ON sub.subject_id = ats.subject_id
-
-            WHERE a.student_id = ?
-
-            ORDER BY
-                COALESCE(
+                    ats.subject_id,
+                    ats.staff_id,
+                    ats.class_id,
+                    ats.allocation_id,
+                    ats.academic_year,
+                    ats.semester,
                     ats.session_date,
-                    DATE(a.scanned_at)
-                ) DESC,
-                a.attendance_id DESC
-            `,
-            [studentId]
-        );
+                    ats.start_time,
+                    ats.end_time,
+                    ats.status AS session_status,
+
+                    sub.subject_code,
+                    sub.subject_name
+
+                FROM attendance a
+
+                INNER JOIN students s
+                    ON s.student_id =
+                       a.student_id
+
+                LEFT JOIN attendance_sessions ats
+                    ON ats.session_id =
+                       a.session_id
+
+                LEFT JOIN subjects sub
+                    ON sub.subject_id =
+                       ats.subject_id
+
+                WHERE
+                    a.student_id = ?
+
+                ORDER BY
+                    COALESCE(
+                        ats.session_date,
+                        DATE(a.scanned_at)
+                    ) DESC,
+
+                    a.attendance_id DESC
+                `,
+                [studentId]
+            );
+
+        // -------------------------------------------------
+        // ATTENDANCE STATISTICS
+        // -------------------------------------------------
 
         const present =
             rows.filter(
@@ -1794,22 +1969,40 @@ async function getMyAttendance(req, res) {
                   )
                 : 0;
 
+        // -------------------------------------------------
+        // RESPONSE
+        // -------------------------------------------------
+
         return res.json({
             success: true,
 
             student: {
                 student_id:
                     student.student_id,
+
                 user_id:
                     student.user_id,
+
+                // Kept for frontend compatibility.
+                // students table has no student_code.
                 student_code:
-                    student.student_code,
+                    null,
+
                 name:
                     student.name,
+
+                email:
+                    student.email,
+
+                phone:
+                    student.phone,
+
                 department:
                     student.department,
+
                 year:
                     student.year,
+
                 section:
                     student.section,
             },
@@ -1819,10 +2012,15 @@ async function getMyAttendance(req, res) {
             attendance_records: rows,
 
             total,
+
             present,
+
             late,
+
             absent,
+
             attended,
+
             percentage,
         });
     } catch (error) {
@@ -1845,7 +2043,10 @@ async function getMyAttendance(req, res) {
 // MARK ATTENDANCE MANUALLY
 // =====================================================
 
-async function markAttendance(req, res) {
+async function markAttendance(
+    req,
+    res
+) {
     try {
         const {
             session_id,
@@ -1881,7 +2082,9 @@ async function markAttendance(req, res) {
                 "PRESENT",
                 "LATE",
                 "ABSENT",
-            ].includes(attendanceStatus)
+            ].includes(
+                attendanceStatus
+            )
         ) {
             return res.status(400).json({
                 success: false,
@@ -1895,7 +2098,9 @@ async function markAttendance(req, res) {
                 `
                 SELECT *
                 FROM attendance_sessions
+
                 WHERE session_id = ?
+
                 LIMIT 1
                 `,
                 [session_id]
@@ -1931,7 +2136,9 @@ async function markAttendance(req, res) {
                 `
                 SELECT *
                 FROM students
+
                 WHERE student_id = ?
+
                 LIMIT 1
                 `,
                 [student_id]
@@ -1946,17 +2153,20 @@ async function markAttendance(req, res) {
         }
 
         // -------------------------------------------------
-        // Check duplicate
+        // CHECK DUPLICATE
         // -------------------------------------------------
 
         const [existingRows] =
             await db.query(
                 `
                 SELECT attendance_id
+
                 FROM attendance
+
                 WHERE
                     session_id = ?
                     AND student_id = ?
+
                 LIMIT 1
                 `,
                 [
@@ -1973,7 +2183,9 @@ async function markAttendance(req, res) {
             await db.query(
                 `
                 UPDATE attendance
+
                 SET status = ?
+
                 WHERE attendance_id = ?
                 `,
                 [
@@ -1987,7 +2199,9 @@ async function markAttendance(req, res) {
                     `
                     SELECT *
                     FROM attendance
+
                     WHERE attendance_id = ?
+
                     LIMIT 1
                     `,
                     [attendanceId]
@@ -2003,6 +2217,10 @@ async function markAttendance(req, res) {
             });
         }
 
+        // -------------------------------------------------
+        // INSERT
+        // -------------------------------------------------
+
         const [result] =
             await db.query(
                 `
@@ -2012,6 +2230,7 @@ async function markAttendance(req, res) {
                     student_id,
                     status
                 )
+
                 VALUES (?, ?, ?)
                 `,
                 [
@@ -2026,7 +2245,9 @@ async function markAttendance(req, res) {
                 `
                 SELECT *
                 FROM attendance
+
                 WHERE attendance_id = ?
+
                 LIMIT 1
                 `,
                 [result.insertId]
@@ -2058,19 +2279,11 @@ async function markAttendance(req, res) {
 // =====================================================
 // SCAN QR ATTENDANCE
 // =====================================================
-//
-// POST /api/attendance/scan
-//
-// Student sends:
-//
-// {
-//     qr_token: "..."
-// }
-//
-// Student is resolved from JWT.
-// =====================================================
 
-async function scanAttendance(req, res) {
+async function scanAttendance(
+    req,
+    res
+) {
     try {
         const qrInput =
             req.body?.qr_token ??
@@ -2090,7 +2303,7 @@ async function scanAttendance(req, res) {
         }
 
         // -------------------------------------------------
-        // Resolve student from JWT
+        // RESOLVE STUDENT FROM JWT
         // -------------------------------------------------
 
         const student =
@@ -2108,7 +2321,7 @@ async function scanAttendance(req, res) {
             Number(student.student_id);
 
         // -------------------------------------------------
-        // Find session by QR token
+        // FIND SESSION
         // -------------------------------------------------
 
         const [sessionRows] =
@@ -2116,7 +2329,9 @@ async function scanAttendance(req, res) {
                 `
                 SELECT *
                 FROM attendance_sessions
+
                 WHERE qr_token = ?
+
                 LIMIT 1
                 `,
                 [qrToken]
@@ -2134,12 +2349,13 @@ async function scanAttendance(req, res) {
             sessionRows[0];
 
         // -------------------------------------------------
-        // Session must be active
+        // SESSION MUST BE ACTIVE
         // -------------------------------------------------
 
         if (
-            normalize(session.status) !==
-            "active"
+            normalize(
+                session.status
+            ) !== "active"
         ) {
             return res.status(400).json({
                 success: false,
@@ -2149,7 +2365,7 @@ async function scanAttendance(req, res) {
         }
 
         // -------------------------------------------------
-        // Check QR expiry
+        // QR EXPIRY
         // -------------------------------------------------
 
         if (session.qr_expires_at) {
@@ -2171,7 +2387,7 @@ async function scanAttendance(req, res) {
         }
 
         // -------------------------------------------------
-        // Validate student class
+        // VALIDATE STUDENT
         // -------------------------------------------------
 
         const validation =
@@ -2189,7 +2405,7 @@ async function scanAttendance(req, res) {
         }
 
         // -------------------------------------------------
-        // Check duplicate
+        // DUPLICATE CHECK
         // -------------------------------------------------
 
         const [existingRows] =
@@ -2228,12 +2444,7 @@ async function scanAttendance(req, res) {
         }
 
         // -------------------------------------------------
-        // Determine attendance status
-        //
-        // If session has start_time and scan happens
-        // after start time, mark LATE.
-        //
-        // Otherwise PRESENT.
+        // DETERMINE STATUS
         // -------------------------------------------------
 
         let attendanceStatus =
@@ -2273,6 +2484,7 @@ async function scanAttendance(req, res) {
                     student_id,
                     status
                 )
+
                 VALUES (?, ?, ?)
                 `,
                 [
@@ -2286,7 +2498,7 @@ async function scanAttendance(req, res) {
             insertResult.insertId;
 
         // -------------------------------------------------
-        // Read inserted record back
+        // READ INSERTED RECORD
         // -------------------------------------------------
 
         const [attendanceRows] =
@@ -2296,7 +2508,9 @@ async function scanAttendance(req, res) {
                     a.*,
 
                     s.student_id,
-                    s.student_code,
+
+                    NULL AS student_code,
+
                     s.name AS student_name,
                     s.email AS student_email,
 
@@ -2339,10 +2553,13 @@ async function scanAttendance(req, res) {
                 attendanceRows[0] || {
                     attendance_id:
                         attendanceId,
+
                     session_id:
                         session.session_id,
+
                     student_id:
                         studentId,
+
                     status:
                         attendanceStatus,
                 },
@@ -2350,8 +2567,10 @@ async function scanAttendance(req, res) {
             student: {
                 student_id:
                     student.student_id,
+
                 student_code:
-                    student.student_code,
+                    null,
+
                 name:
                     student.name,
             },
@@ -2359,8 +2578,10 @@ async function scanAttendance(req, res) {
             session: {
                 session_id:
                     session.session_id,
+
                 subject_id:
                     session.subject_id,
+
                 class_id:
                     session.class_id,
             },
@@ -2372,7 +2593,7 @@ async function scanAttendance(req, res) {
         );
 
         // -------------------------------------------------
-        // Handle duplicate-key race condition
+        // DUPLICATE KEY RACE CONDITION
         // -------------------------------------------------
 
         if (
@@ -2422,9 +2643,7 @@ async function updateAttendance(
         }
 
         const attendanceStatus =
-            String(
-                status || ""
-            )
+            String(status || "")
                 .trim()
                 .toUpperCase();
 
@@ -2433,7 +2652,9 @@ async function updateAttendance(
                 "PRESENT",
                 "LATE",
                 "ABSENT",
-            ].includes(attendanceStatus)
+            ].includes(
+                attendanceStatus
+            )
         ) {
             return res.status(400).json({
                 success: false,
@@ -2447,6 +2668,7 @@ async function updateAttendance(
                 `
                 SELECT
                     a.*,
+
                     ats.staff_id,
                     ats.status AS session_status
 
@@ -2456,7 +2678,8 @@ async function updateAttendance(
                     ON ats.session_id =
                        a.session_id
 
-                WHERE a.attendance_id = ?
+                WHERE
+                    a.attendance_id = ?
 
                 LIMIT 1
                 `,
@@ -2491,7 +2714,9 @@ async function updateAttendance(
         await db.query(
             `
             UPDATE attendance
+
             SET status = ?
+
             WHERE attendance_id = ?
             `,
             [
@@ -2505,7 +2730,9 @@ async function updateAttendance(
                 `
                 SELECT *
                 FROM attendance
+
                 WHERE attendance_id = ?
+
                 LIMIT 1
                 `,
                 [attendanceId]
@@ -2558,6 +2785,7 @@ async function deleteAttendance(
             await db.query(
                 `
                 DELETE FROM attendance
+
                 WHERE attendance_id = ?
                 `,
                 [attendanceId]
