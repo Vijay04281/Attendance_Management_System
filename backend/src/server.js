@@ -1,87 +1,11 @@
 // =====================================================
+// SERVER.JS
 // ATTENDANCE MANAGEMENT SYSTEM
-// BACKEND SERVER
-// =====================================================
-
-// =====================================================
-// LOAD ENVIRONMENT VARIABLES FIRST
-// =====================================================
-
-const path = require("path");
-const dotenv = require("dotenv");
-
-const envPath = path.resolve(__dirname, "../.env");
-
-const envResult = dotenv.config({
-  path: envPath,
-  override: true,
-});
-
-// =====================================================
-// ENVIRONMENT VALIDATION
-// =====================================================
-
-console.log("================================================");
-console.log("Environment Configuration");
-console.log("================================================");
-console.log("ENV FILE:", envPath);
-
-if (envResult.error) {
-  console.error("ERROR LOADING .env:");
-  console.error(envResult.error.message);
-} else {
-  console.log(".env file loaded successfully");
-}
-
-console.log("DB_HOST:", process.env.DB_HOST || "undefined");
-console.log("DB_PORT:", process.env.DB_PORT || "undefined");
-console.log("DB_USER:", process.env.DB_USER || "undefined");
-console.log("DB_NAME:", process.env.DB_NAME || "undefined");
-console.log(
-  "DB_PASSWORD:",
-  process.env.DB_PASSWORD ? "LOADED" : "NOT LOADED"
-);
-console.log("PORT:", process.env.PORT || "5000");
-console.log(
-  "JWT_SECRET:",
-  process.env.JWT_SECRET ? "LOADED" : "NOT LOADED"
-);
-console.log("================================================");
-
-// =====================================================
-// REQUIRED ENVIRONMENT VARIABLES
-// =====================================================
-
-const requiredEnv = [
-  "DB_HOST",
-  "DB_PORT",
-  "DB_USER",
-  "DB_PASSWORD",
-  "DB_NAME",
-  "JWT_SECRET",
-];
-
-const missingEnv = requiredEnv.filter(
-  (key) => !process.env[key] || String(process.env[key]).trim() === ""
-);
-
-if (missingEnv.length > 0) {
-  console.error("");
-  console.error("================================================");
-  console.error("MISSING ENVIRONMENT VARIABLES");
-  console.error("================================================");
-  console.error(missingEnv.join(", "));
-  console.error("================================================");
-  console.error("");
-  process.exit(1);
-}
-
-// =====================================================
-// IMPORT DEPENDENCIES AFTER ENV IS LOADED
 // =====================================================
 
 const express = require("express");
 const cors = require("cors");
+require("dotenv").config();
 
 // =====================================================
 // ROUTES
@@ -94,17 +18,14 @@ const departmentRoutes = require("./routes/departmentRoutes");
 const subjectRoutes = require("./routes/subjectRoutes");
 const classRoutes = require("./routes/classRoutes");
 const assignmentRoutes = require("./routes/assignmentRoutes");
-const timetableRoutes = require("./routes/timetableRoutes");
-const attendanceSessionRoutes = require("./routes/attendanceSessionRoutes");
 const attendanceRoutes = require("./routes/attendanceRoutes");
+const timetableRoutes = require("./routes/timetableRoutes");
 const classTeacherRoutes = require("./routes/classTeacherRoutes");
-const classTeacherAssignmentRoutes = require("./routes/classTeacherAssignmentRoutes");
-const subjectAllocationRoutes = require("./routes/subjectAllocationRoutes");
-const attendanceRecordRoutes = require("./routes/attendanceRecordRoutes");
-const attendanceReportRoutes = require("./routes/attendanceReportRoutes");
-const qrCodeRoutes = require("./routes/qrCodeRoutes");
-const auditLogRoutes = require("./routes/auditLogRoutes");
-const adminRoutes = require("./routes/adminRoutes");
+const dashboardRoutes = require("./routes/dashboardRoutes");
+
+// Add more route imports here if your project has them.
+// Example:
+// const adminRoutes = require("./routes/adminRoutes");
 
 // =====================================================
 // EXPRESS APP
@@ -112,132 +33,185 @@ const adminRoutes = require("./routes/adminRoutes");
 
 const app = express();
 
-app.use(
-    "/api/attendance",
-    attendanceRoutes
-);
 // =====================================================
-// CORS
+// TRUST PROXY
+// Required for Render / production environments
+// =====================================================
+
+app.set("trust proxy", 1);
+
+// =====================================================
+// PORT
+// =====================================================
+
+const PORT = process.env.PORT || 5000;
+
+// =====================================================
+// ALLOWED CORS ORIGINS
 // =====================================================
 
 const allowedOrigins = [
-  "http://localhost:3000",
-  "http://localhost:5173",
-  "https://attendance-management-system-inky-five.vercel.app",
+    "http://localhost:3000",
+    "http://localhost:5173",
+
+    // Production frontend
+    "https://attendance-management-system-inky-five.vercel.app",
 ];
 
+// =====================================================
+// CORS CONFIGURATION
+// IMPORTANT:
+// CORS MUST COME BEFORE ALL API ROUTES
+// =====================================================
+
 const corsOptions = {
-  origin: (origin, callback) => {
-    console.log("REQUEST ORIGIN:", origin);
+    origin: (origin, callback) => {
+        console.log("------------------------------------------------");
+        console.log("CORS CHECK");
+        console.log("REQUEST ORIGIN:", origin || "NO ORIGIN");
 
-    // Allow Postman, mobile apps, server-to-server requests
-    if (!origin) {
-      return callback(null, true);
-    }
+        // Requests without an Origin header:
+        // Postman, curl, server-to-server, etc.
+        if (!origin) {
+            console.log("CORS ALLOWED: request has no origin");
+            return callback(null, true);
+        }
 
-    if (allowedOrigins.includes(origin)) {
-      console.log("CORS ALLOWED:", origin);
-      return callback(null, true);
-    }
+        // Allow known frontend origins
+        if (allowedOrigins.includes(origin)) {
+            console.log("CORS ALLOWED:", origin);
+            return callback(null, true);
+        }
 
-    console.error("CORS BLOCKED:", origin);
+        console.error("CORS BLOCKED:", origin);
 
-    return callback(
-      new Error(`Origin not allowed by CORS: ${origin}`)
-    );
-  },
+        return callback(
+            new Error(`Origin not allowed by CORS: ${origin}`)
+        );
+    },
 
-  credentials: true,
+    credentials: true,
 
-  methods: [
-    "GET",
-    "POST",
-    "PUT",
-    "PATCH",
-    "DELETE",
-    "OPTIONS",
-  ],
+    methods: [
+        "GET",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+        "OPTIONS",
+    ],
 
-  allowedHeaders: [
-    "Origin",
-    "X-Requested-With",
-    "Content-Type",
-    "Accept",
-    "Authorization",
-  ],
+    allowedHeaders: [
+        "Origin",
+        "X-Requested-With",
+        "Content-Type",
+        "Accept",
+        "Authorization",
+    ],
+
+    optionsSuccessStatus: 204,
 };
 
+// =====================================================
+// CORS
+// MUST BE BEFORE BODY PARSERS AND ROUTES
+// =====================================================
 
-// Apply CORS globally
 app.use(cors(corsOptions));
 
-// Extra headers
+// =====================================================
+// EXPRESS 5 SAFE PREFLIGHT HANDLER
+//
+// DO NOT USE:
+// app.options("*", cors(...))
+//
+// Express 5 can throw:
+// PathError: Missing parameter name at index 1: *
+// =====================================================
+
 app.use((req, res, next) => {
-  const origin = req.headers.origin;
+    if (req.method === "OPTIONS") {
+        console.log("------------------------------------------------");
+        console.log("CORS PREFLIGHT REQUEST");
+        console.log("ORIGIN:", req.headers.origin || "NO ORIGIN");
+        console.log("METHOD:", req.headers["access-control-request-method"]);
+        console.log(
+            "HEADERS:",
+            req.headers["access-control-request-headers"]
+        );
+        console.log("URL:", req.originalUrl);
 
-  if (origin && allowedOrigins.includes(origin)) {
-    res.header("Access-Control-Allow-Origin", origin);
-  }
+        return res.status(204).end();
+    }
 
-  res.header(
-    "Access-Control-Allow-Headers",
-    "Origin, X-Requested-With, Content-Type, Accept, Authorization"
-  );
-
-  res.header(
-    "Access-Control-Allow-Methods",
-    "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-  );
-
-  res.header(
-    "Access-Control-Allow-Credentials",
-    "true"
-  );
-
-  next();
+    next();
 });
+
 // =====================================================
 // BODY PARSERS
 // =====================================================
 
 app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true }));
+
+app.use(
+    express.urlencoded({
+        extended: true,
+        limit: "10mb",
+    })
+);
 
 // =====================================================
 // REQUEST LOGGER
 // =====================================================
 
 app.use((req, res, next) => {
-  console.log(
-    `[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`
-  );
+    console.log("------------------------------------------------");
+    console.log("REQUEST");
+    console.log("METHOD :", req.method);
+    console.log("URL    :", req.originalUrl);
+    console.log("ORIGIN :", req.headers.origin || "NO ORIGIN");
+    console.log("IP     :", req.ip);
+    console.log("------------------------------------------------");
 
-  next();
+    next();
 });
 
 // =====================================================
-// ROOT
+// ROOT ROUTE
 // =====================================================
 
 app.get("/", (req, res) => {
-  res.json({
-    success: true,
-    message: "Attendance Management System API is running",
-    version: "1.0.0",
-  });
+    res.status(200).json({
+        success: true,
+        message: "Attendance Management System API is running",
+        environment: process.env.NODE_ENV || "development",
+        timestamp: new Date().toISOString(),
+    });
 });
 
 // =====================================================
 // HEALTH CHECK
 // =====================================================
 
-app.get("/api/health", (req, res) => {
-  res.json({
-    success: true,
-    message: "API is healthy",
-    database: "configured",
-    timestamp: new Date().toISOString(),
-  });
+app.get("/health", (req, res) => {
+    res.status(200).json({
+        success: true,
+        message: "Server is healthy",
+        timestamp: new Date().toISOString(),
+    });
+});
+
+// =====================================================
+// API HEALTH CHECK
+// =====================================================
+
+app.get("/api", (req, res) => {
+    res.status(200).json({
+        success: true,
+        message: "Attendance Management System API",
+        version: "1.0.0",
+        timestamp: new Date().toISOString(),
+    });
 });
 
 // =====================================================
@@ -245,106 +219,115 @@ app.get("/api/health", (req, res) => {
 // =====================================================
 
 const mountRoute = (path, route, name) => {
-  if (!route) {
-    console.error(`✗ ${name} FAILED - route is undefined`);
-    return;
-  }
+    if (!route) {
+        console.error(`❌ ${name} route is undefined`);
+        return;
+    }
 
-  app.use(path, route);
+    app.use(path, route);
 
-  console.log(`✓ Mounted ${name} -> ${path}`);
+    console.log(`✅ ${name} mounted at ${path}`);
 };
 
 // =====================================================
-// MOUNT ROUTES
+// API ROUTES
 // =====================================================
 
-mountRoute("/api/auth", authRoutes, "authRoutes");
-
-mountRoute("/api/students", studentRoutes, "studentRoutes");
-
-mountRoute("/api/staff", staffRoutes, "staffRoutes");
+// ---------------- AUTH ----------------
 
 mountRoute(
-  "/api/departments",
-  departmentRoutes,
-  "departmentRoutes"
+    "/api/auth",
+    authRoutes,
+    "AUTH"
 );
 
-mountRoute("/api/subjects", subjectRoutes, "subjectRoutes");
-
-mountRoute("/api/classes", classRoutes, "classRoutes");
+// ---------------- STUDENTS ----------------
 
 mountRoute(
-  "/api/assignments",
-  assignmentRoutes,
-  "assignmentRoutes"
+    "/api/students",
+    studentRoutes,
+    "STUDENTS"
 );
 
-mountRoute(
-  "/api/timetables",
-  timetableRoutes,
-  "timetableRoutes"
-);
+// ---------------- STAFF ----------------
 
 mountRoute(
-  "/api/subject-allocations",
-  subjectAllocationRoutes,
-  "subjectAllocationRoutes"
+    "/api/staff",
+    staffRoutes,
+    "STAFF"
 );
 
-mountRoute(
-  "/api/attendance-sessions",
-  attendanceSessionRoutes,
-  "attendanceSessionRoutes"
-);
+// ---------------- DEPARTMENTS ----------------
 
 mountRoute(
-  "/api/attendance",
-  attendanceRoutes,
-  "attendanceRoutes"
+    "/api/departments",
+    departmentRoutes,
+    "DEPARTMENTS"
 );
 
-mountRoute(
-  "/api/attendance-records",
-  attendanceRecordRoutes,
-  "attendanceRecordRoutes"
-);
+// ---------------- SUBJECTS ----------------
 
 mountRoute(
-  "/api/attendance-reports",
-  attendanceReportRoutes,
-  "attendanceReportRoutes"
+    "/api/subjects",
+    subjectRoutes,
+    "SUBJECTS"
 );
 
-mountRoute(
-  "/api/qr-codes",
-  qrCodeRoutes,
-  "qrCodeRoutes"
-);
+// ---------------- CLASSES ----------------
 
 mountRoute(
-  "/api/class-teacher",
-  classTeacherRoutes,
-  "classTeacherRoutes"
+    "/api/classes",
+    classRoutes,
+    "CLASSES"
 );
 
-mountRoute(
-  "/api/class-teacher-assignments",
-  classTeacherAssignmentRoutes,
-  "classTeacherAssignmentRoutes"
-);
+// ---------------- ASSIGNMENTS ----------------
 
 mountRoute(
-  "/api/admin",
-  adminRoutes,
-  "adminRoutes"
+    "/api/assignments",
+    assignmentRoutes,
+    "ASSIGNMENTS"
 );
 
+// ---------------- ATTENDANCE ----------------
+//
+// IMPORTANT:
+// This route MUST ONLY be mounted ONCE.
+//
+// DO NOT add another:
+// app.use("/api/attendance", attendanceRoutes)
+//
+// anywhere else in this file.
+//
+
 mountRoute(
-  "/api/audit-logs",
-  auditLogRoutes,
-  "auditLogRoutes"
+    "/api/attendance",
+    attendanceRoutes,
+    "ATTENDANCE"
+);
+
+// ---------------- TIMETABLE ----------------
+
+mountRoute(
+    "/api/timetable",
+    timetableRoutes,
+    "TIMETABLE"
+);
+
+// ---------------- CLASS TEACHER ----------------
+
+mountRoute(
+    "/api/class-teachers",
+    classTeacherRoutes,
+    "CLASS TEACHER"
+);
+
+// ---------------- DASHBOARD ----------------
+
+mountRoute(
+    "/api/dashboard",
+    dashboardRoutes,
+    "DASHBOARD"
 );
 
 // =====================================================
@@ -352,11 +335,14 @@ mountRoute(
 // =====================================================
 
 app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: "API endpoint not found",
-    path: req.originalUrl,
-  });
+    console.log("404 ROUTE NOT FOUND:", req.method, req.originalUrl);
+
+    res.status(404).json({
+        success: false,
+        message: "API route not found",
+        path: req.originalUrl,
+        method: req.method,
+    });
 });
 
 // =====================================================
@@ -364,69 +350,144 @@ app.use((req, res) => {
 // =====================================================
 
 app.use((err, req, res, next) => {
-  console.error("================================================");
-  console.error("GLOBAL SERVER ERROR");
-  console.error("================================================");
-  console.error(err);
-  console.error("================================================");
+    console.error("================================================");
+    console.error("GLOBAL ERROR");
+    console.error("================================================");
+    console.error("Message:", err.message);
+    console.error("Stack:", err.stack);
+    console.error("Method:", req.method);
+    console.error("URL:", req.originalUrl);
+    console.error("Origin:", req.headers.origin);
+    console.error("================================================");
 
-  res.status(err.status || 500).json({
-    success: false,
-    message: err.message || "Internal server error",
-  });
+    // -------------------------------------------------
+    // Re-apply CORS headers for allowed origins
+    // -------------------------------------------------
+
+    const requestOrigin = req.headers.origin;
+
+    if (
+        requestOrigin &&
+        allowedOrigins.includes(requestOrigin)
+    ) {
+        res.header(
+            "Access-Control-Allow-Origin",
+            requestOrigin
+        );
+
+        res.header(
+            "Access-Control-Allow-Credentials",
+            "true"
+        );
+
+        res.header(
+            "Vary",
+            "Origin"
+        );
+    }
+
+    // -------------------------------------------------
+    // CORS ERROR
+    // -------------------------------------------------
+
+    if (
+        err.message &&
+        err.message.includes("Origin not allowed by CORS")
+    ) {
+        return res.status(403).json({
+            success: false,
+            message: "CORS origin not allowed",
+            origin: requestOrigin || null,
+        });
+    }
+
+    // -------------------------------------------------
+    // GENERAL ERROR
+    // -------------------------------------------------
+
+    return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+        error:
+            process.env.NODE_ENV === "production"
+                ? undefined
+                : err.message,
+    });
 });
-
-// =====================================================
-// SERVER PORT
-// =====================================================
-
-const PORT = Number(process.env.PORT) || 5000;
 
 // =====================================================
 // START SERVER
 // =====================================================
 
-const server = app.listen(PORT, "0.0.0.0", () => {
-  console.log("");
-  console.log("==============================================");
-  console.log("Attendance Management System API");
-  console.log("==============================================");
-  console.log(`Local:   http://localhost:${PORT}`);
-  console.log(`Network: http://localhost:${PORT}`);
-  console.log("==============================================");
-  console.log("Server started successfully");
-  console.log("==============================================");
-});
+const startServer = () => {
+    try {
+        app.listen(
+            PORT,
+            "0.0.0.0",
+            () => {
+                console.log("");
+                console.log("================================================");
+                console.log("ATTENDANCE MANAGEMENT SYSTEM");
+                console.log("================================================");
+                console.log(`Server running on port: ${PORT}`);
+                console.log(
+                    `Environment: ${
+                        process.env.NODE_ENV || "development"
+                    }`
+                );
+                console.log("");
+                console.log("Allowed CORS Origins:");
+
+                allowedOrigins.forEach((origin) => {
+                    console.log(`  ✅ ${origin}`);
+                });
+
+                console.log("");
+                console.log("API Base URL:");
+                console.log(
+                    `  http://localhost:${PORT}/api`
+                );
+
+                console.log("");
+                console.log("Health:");
+                console.log(
+                    `  http://localhost:${PORT}/health`
+                );
+
+                console.log("");
+                console.log("Attendance API:");
+                console.log(
+                    `  http://localhost:${PORT}/api/attendance`
+                );
+
+                console.log("");
+                console.log("Student Attendance:");
+                console.log(
+                    `  http://localhost:${PORT}/api/attendance/my`
+                );
+
+                console.log("");
+                console.log("================================================");
+                console.log("SERVER READY");
+                console.log("================================================");
+                console.log("");
+            }
+        );
+    } catch (error) {
+        console.error("❌ Failed to start server");
+        console.error(error);
+        process.exit(1);
+    }
+};
 
 // =====================================================
-// SERVER ERROR
+// START
 // =====================================================
 
-server.on("error", (error) => {
-  console.error("");
-  console.error("================================================");
-  console.error("SERVER START ERROR");
-  console.error("================================================");
-
-  if (error.code === "EADDRINUSE") {
-    console.error(`Port ${PORT} is already in use.`);
-  } else {
-    console.error(error);
-  }
-
-  console.error("================================================");
-});
+startServer();
 
 // =====================================================
-// PROCESS ERROR HANDLERS
+// EXPORT
 // =====================================================
 
-process.on("uncaughtException", (error) => {
-  console.error("UNCAUGHT EXCEPTION:");
-  console.error(error);
-});
-
-process.on("unhandledRejection", (reason) => {
-  console.error("UNHANDLED PROMISE REJECTION:");
-  console.error(reason);
-});
+module.exports = app;
