@@ -292,17 +292,15 @@ const sessionSelect = `
 `;
 
 // =====================================================
-// HELPER - GENERATE NEW QR FOR SESSION
+// HELPER - ROTATE SESSION QR
 //
-// IMPORTANT:
+// ALWAYS generates a new QR.
 //
-// This function ALWAYS creates a NEW QR.
-//
-// It is used only when:
-// 1. A new attendance session starts.
-// 2. The current QR has expired.
-// 3. A student successfully scans.
-// 4. Teacher explicitly forces refresh.
+// Used when:
+// 1. New attendance session starts.
+// 2. QR expires.
+// 3. Student successfully scans.
+// 4. Teacher forces refresh.
 // =====================================================
 
 const rotateSessionQR = async (
@@ -404,16 +402,6 @@ const rotateSessionQR = async (
 
 // =====================================================
 // HELPER - GET CURRENT QR
-//
-// IMPORTANT:
-//
-// Unlike rotateSessionQR(), this function DOES NOT
-// create a new QR when the existing QR is still valid.
-//
-// This is what allows StartAttendance.jsx to poll
-// safely without generating a QR every second.
-//
-// If the existing QR is expired, a new QR is generated.
 // =====================================================
 
 const getCurrentOrRotateSessionQR = async (
@@ -475,8 +463,6 @@ const getCurrentOrRotateSessionQR = async (
 
     // -------------------------------------------------
     // CHECK EXPIRY USING DATABASE TIME
-    //
-    // This avoids browser/server timezone problems.
     // -------------------------------------------------
 
     const [expiryRows] =
@@ -2044,22 +2030,6 @@ const createAttendanceSession = async (
 
 // =====================================================
 // GET ATTENDANCE SESSION QR
-//
-// GET /api/attendance-sessions/:id/qr
-//
-// DEFAULT:
-//
-// Returns CURRENT QR.
-//
-// It does NOT rotate a valid QR.
-//
-// If expired, it creates a new QR.
-//
-// FORCE:
-//
-// /api/attendance-sessions/:id/qr?force=true
-//
-// This explicitly creates a new QR.
 // =====================================================
 
 const getAttendanceSessionQR = async (
@@ -2165,14 +2135,6 @@ const getAttendanceSessionQR = async (
                     "Attendance session is not active."
             });
         }
-
-        // -------------------------------------------------
-        // IMPORTANT:
-        //
-        // Do NOT call rotateSessionQR() blindly.
-        //
-        // This keeps the same QR while it is valid.
-        // -------------------------------------------------
 
         const qrResult =
             await getCurrentOrRotateSessionQR(
@@ -2469,12 +2431,26 @@ const updateAttendanceSession = async (
 
 // =====================================================
 // CLOSE ATTENDANCE SESSION
+//
+// IMPORTANT FIX:
+//
+// We DO NOT set qr_token = NULL.
+//
+// Instead:
+// - generate a completely new random token
+// - set its expiry to NOW()
+// - change status to CLOSED
+//
+// Therefore the old displayed QR becomes invalid,
+// while this also works if qr_token is NOT NULL.
 // =====================================================
 
 const closeAttendanceSession = async (
     req,
     res
 ) => {
+    let connection;
+
     try {
         const sessionId =
             Number(
@@ -2501,8 +2477,15 @@ const closeAttendanceSession = async (
         const staffId =
             await resolveStaffId(req);
 
+        connection =
+            await db.getConnection();
+
+        // -------------------------------------------------
+        // LOAD SESSION
+        // -------------------------------------------------
+
         const [rows] =
-            await db.query(
+            await connection.query(
                 `
                 SELECT
                     session_id,
@@ -2530,6 +2513,10 @@ const closeAttendanceSession = async (
         const session =
             rows[0];
 
+        // -------------------------------------------------
+        // AUTHORIZATION
+        // -------------------------------------------------
+
         if (
             userRole === "STAFF" ||
             userRole === "TEACHER"
@@ -2551,16 +2538,20 @@ const closeAttendanceSession = async (
             }
         }
 
+        // -------------------------------------------------
+        // ALREADY CLOSED
+        // -------------------------------------------------
+
         if (
             String(
-                session.status
+                session.status || ""
             ).toUpperCase() ===
             "CLOSED"
         ) {
             const [
                 alreadyClosedRows
             ] =
-                await db.query(
+                await connection.query(
                     `
                     ${sessionSelect}
                     WHERE ats.session_id = ?
@@ -2579,38 +2570,72 @@ const closeAttendanceSession = async (
             });
         }
 
+        // -------------------------------------------------
+        // BEGIN TRANSACTION
+        // -------------------------------------------------
+
+        await connection.beginTransaction();
+
+        // -------------------------------------------------
+        // GENERATE DEAD / INVALID QR TOKEN
+        //
+        // Do NOT use NULL because some databases define
+        // qr_token as NOT NULL.
+        // -------------------------------------------------
+
+        const invalidQrToken =
+            `closed_${generateQRToken()}`;
+
+        // -------------------------------------------------
+        // CLOSE SESSION
+        //
+        // QR expires immediately because qr_expires_at
+        // is set to database NOW().
+        // -------------------------------------------------
+
         const [result] =
-            await db.query(
+            await connection.query(
                 `
                 UPDATE attendance_sessions
                 SET
                     status = 'CLOSED',
+
                     end_time = COALESCE(
                         end_time,
                         CURTIME()
                     ),
 
-                    -- Invalidate the QR permanently
-                    qr_token = NULL,
-                    qr_expires_at = NULL
+                    qr_token = ?,
+
+                    qr_expires_at = NOW()
 
                 WHERE session_id = ?
+                  AND status = 'ACTIVE'
                 `,
-                [sessionId]
+                [
+                    invalidQrToken,
+                    sessionId
+                ]
             );
 
         if (
             result.affectedRows === 0
         ) {
+            await connection.rollback();
+
             return res.status(400).json({
                 success: false,
                 message:
-                    "Failed to close attendance session."
+                    "Attendance session could not be closed because it is no longer active."
             });
         }
 
+        // -------------------------------------------------
+        // GET UPDATED SESSION
+        // -------------------------------------------------
+
         const [updatedRows] =
-            await db.query(
+            await connection.query(
                 `
                 ${sessionSelect}
                 WHERE ats.session_id = ?
@@ -2619,15 +2644,34 @@ const closeAttendanceSession = async (
                 [sessionId]
             );
 
+        // -------------------------------------------------
+        // COMMIT
+        // -------------------------------------------------
+
+        await connection.commit();
+
         return res.json({
             success: true,
+
             message:
                 "Attendance session closed successfully.",
+
             session:
                 updatedRows[0] ||
                 null
         });
     } catch (error) {
+        if (connection) {
+            try {
+                await connection.rollback();
+            } catch (rollbackError) {
+                console.error(
+                    "closeAttendanceSession rollback error:",
+                    rollbackError
+                );
+            }
+        }
+
         console.error(
             "closeAttendanceSession error:",
             error
@@ -2635,11 +2679,17 @@ const closeAttendanceSession = async (
 
         return res.status(500).json({
             success: false,
+
             message:
                 "Failed to close attendance session.",
+
             error:
                 error.message
         });
+    } finally {
+        if (connection) {
+            connection.release();
+        }
     }
 };
 
@@ -2780,12 +2830,9 @@ module.exports = {
 
     deleteAttendanceSession,
 
-    // -------------------------------------------------
-    // IMPORTANT:
-    // Used by scanAttendance() to immediately create
-    // the next QR after a successful student scan.
-    // -------------------------------------------------
-
+    // Used by attendanceController.js
+    // for QR rotation after successful scan.
     rotateSessionQR,
+
     getCurrentOrRotateSessionQR
 };
