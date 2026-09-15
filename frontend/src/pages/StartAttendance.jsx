@@ -16,6 +16,11 @@ import {
     FaPlay,
     FaUsers,
     FaSyncAlt,
+    FaUserGraduate,
+    FaIdCard,
+    FaChalkboardTeacher,
+    FaCalendarAlt,
+    FaHourglassHalf,
 } from "react-icons/fa";
 
 // =====================================================
@@ -29,15 +34,15 @@ const API_URL =
 // QR CONFIGURATION
 // =====================================================
 
-// Every QR is displayed for 15 seconds.
 const QR_EXPIRY_SECONDS = 15;
 
-// Check backend every 1 second to detect when a student
-// has scanned and backend has generated a new QR.
 const QR_POLL_INTERVAL = 1000;
 
-// Small delay after backend expiry.
 const QR_EXPIRY_REFRESH_DELAY = 250;
+
+// Attendance information is checked every second.
+// This makes the latest student scan appear quickly.
+const ATTENDANCE_POLL_INTERVAL = 1000;
 
 
 // =====================================================
@@ -45,6 +50,7 @@ const QR_EXPIRY_REFRESH_DELAY = 250;
 // =====================================================
 
 export default function StartAttendance() {
+
     // =================================================
     // STATE
     // =================================================
@@ -81,6 +87,28 @@ export default function StartAttendance() {
     const [error, setError] =
         useState("");
 
+    // =================================================
+    // ATTENDANCE STATE
+    // =================================================
+
+    const [attendanceRecords, setAttendanceRecords] =
+        useState([]);
+
+    const [latestAttendance, setLatestAttendance] =
+        useState(null);
+
+    const [attendanceLoading, setAttendanceLoading] =
+        useState(false);
+
+    const [attendanceStats, setAttendanceStats] =
+        useState({
+            total: 0,
+            present: 0,
+            late: 0,
+            absent: 0,
+            percentage: 0,
+        });
+
 
     // =================================================
     // REFS
@@ -104,21 +132,12 @@ export default function StartAttendance() {
     const sessionRef =
         useRef(null);
 
-    // Current backend QR token.
     const qrTokenRef =
         useRef("");
 
-    // Backend expiry.
     const qrExpiryRef =
         useRef(null);
 
-    // LOCAL DISPLAY expiry.
-    //
-    // This guarantees the visible countdown is:
-    //
-    // 15 → 14 → 13 → ... → 1
-    //
-    // whenever a new QR is received.
     const localQRExpiryRef =
         useRef(null);
 
@@ -131,7 +150,16 @@ export default function StartAttendance() {
     const countdownTimerRef =
         useRef(null);
 
+    const attendancePollingTimerRef =
+        useRef(null);
+
     const refreshQRRef =
+        useRef(null);
+
+    const attendanceRequestInProgress =
+        useRef(false);
+
+    const latestAttendanceIdRef =
         useRef(null);
 
 
@@ -155,7 +183,9 @@ export default function StartAttendance() {
 
     const clearQRRefreshTimer =
         useCallback(() => {
+
             if (qrRefreshTimerRef.current) {
+
                 clearTimeout(
                     qrRefreshTimerRef.current
                 );
@@ -163,12 +193,15 @@ export default function StartAttendance() {
                 qrRefreshTimerRef.current =
                     null;
             }
+
         }, []);
 
 
     const clearQRPolling =
         useCallback(() => {
+
             if (qrPollingTimerRef.current) {
+
                 clearInterval(
                     qrPollingTimerRef.current
                 );
@@ -176,12 +209,33 @@ export default function StartAttendance() {
                 qrPollingTimerRef.current =
                     null;
             }
+
+        }, []);
+
+
+    const clearAttendancePolling =
+        useCallback(() => {
+
+            if (
+                attendancePollingTimerRef.current
+            ) {
+
+                clearInterval(
+                    attendancePollingTimerRef.current
+                );
+
+                attendancePollingTimerRef.current =
+                    null;
+            }
+
         }, []);
 
 
     const clearCountdownTimer =
         useCallback(() => {
+
             if (countdownTimerRef.current) {
+
                 clearInterval(
                     countdownTimerRef.current
                 );
@@ -189,17 +243,41 @@ export default function StartAttendance() {
                 countdownTimerRef.current =
                     null;
             }
+
         }, []);
 
 
     const clearAllQRTimers =
         useCallback(() => {
+
             clearQRRefreshTimer();
+
             clearQRPolling();
+
             clearCountdownTimer();
+
         }, [
             clearQRRefreshTimer,
             clearQRPolling,
+            clearCountdownTimer,
+        ]);
+
+
+    const clearAllTimers =
+        useCallback(() => {
+
+            clearQRRefreshTimer();
+
+            clearQRPolling();
+
+            clearAttendancePolling();
+
+            clearCountdownTimer();
+
+        }, [
+            clearQRRefreshTimer,
+            clearQRPolling,
+            clearAttendancePolling,
             clearCountdownTimer,
         ]);
 
@@ -211,6 +289,7 @@ export default function StartAttendance() {
     const getResponseData = async (
         response
     ) => {
+
         const text =
             await response.text();
 
@@ -219,8 +298,11 @@ export default function StartAttendance() {
         }
 
         try {
+
             return JSON.parse(text);
+
         } catch (error) {
+
             throw new Error(
                 text ||
                     `Server returned invalid response (${response.status})`
@@ -237,11 +319,16 @@ export default function StartAttendance() {
         data,
         fallback
     ) => {
+
         if (!data) {
             return fallback;
         }
 
-        if (typeof data === "string") {
+        if (
+            typeof data ===
+            "string"
+        ) {
+
             return data;
         }
 
@@ -264,6 +351,7 @@ export default function StartAttendance() {
     const extractSession = (
         data
     ) => {
+
         if (!data) {
             return null;
         }
@@ -280,6 +368,7 @@ export default function StartAttendance() {
             data.session_id ||
             data.data?.session_id
         ) {
+
             return (
                 data.data ||
                 data
@@ -297,6 +386,7 @@ export default function StartAttendance() {
     const extractQRImage = (
         data
     ) => {
+
         if (!data) {
             return "";
         }
@@ -310,16 +400,21 @@ export default function StartAttendance() {
             data.qr_data,
         ];
 
-        for (const value of values) {
+        for (
+            const value of values
+        ) {
+
             if (
                 typeof value === "string" &&
                 value.trim()
             ) {
+
                 return value;
             }
         }
 
         if (data.data) {
+
             const nested =
                 extractQRImage(
                     data.data
@@ -331,6 +426,7 @@ export default function StartAttendance() {
         }
 
         if (data.session) {
+
             const nested =
                 extractQRImage(
                     data.session
@@ -352,6 +448,7 @@ export default function StartAttendance() {
     const extractQRToken = (
         data
     ) => {
+
         if (!data) {
             return "";
         }
@@ -363,16 +460,21 @@ export default function StartAttendance() {
             data.qr_token_value,
         ];
 
-        for (const value of values) {
+        for (
+            const value of values
+        ) {
+
             if (
                 typeof value === "string" &&
                 value.trim()
             ) {
+
                 return value.trim();
             }
         }
 
         if (data.data) {
+
             const nested =
                 extractQRToken(
                     data.data
@@ -384,6 +486,7 @@ export default function StartAttendance() {
         }
 
         if (data.session) {
+
             const nested =
                 extractQRToken(
                     data.session
@@ -405,6 +508,7 @@ export default function StartAttendance() {
     const extractQRExpiry = (
         data
     ) => {
+
         if (!data) {
             return null;
         }
@@ -415,13 +519,17 @@ export default function StartAttendance() {
             data.qrExpiresAt,
         ];
 
-        for (const value of values) {
+        for (
+            const value of values
+        ) {
+
             if (value) {
                 return value;
             }
         }
 
         if (data.data) {
+
             const nested =
                 extractQRExpiry(
                     data.data
@@ -433,6 +541,7 @@ export default function StartAttendance() {
         }
 
         if (data.session) {
+
             const nested =
                 extractQRExpiry(
                     data.session
@@ -454,11 +563,15 @@ export default function StartAttendance() {
     const parseDateTime = (
         value
     ) => {
+
         if (!value) {
             return null;
         }
 
-        if (value instanceof Date) {
+        if (
+            value instanceof Date
+        ) {
+
             return value;
         }
 
@@ -466,6 +579,7 @@ export default function StartAttendance() {
             typeof value !==
             "string"
         ) {
+
             return null;
         }
 
@@ -476,17 +590,13 @@ export default function StartAttendance() {
             return null;
         }
 
-        // MySQL DATETIME:
-        //
-        // 2026-09-15 16:02:30
-        //
-
         const mysqlMatch =
             trimmed.match(
-                /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/
+                /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/
             );
 
         if (mysqlMatch) {
+
             const [
                 ,
                 year,
@@ -516,6 +626,7 @@ export default function StartAttendance() {
                 parsed.getTime()
             )
         ) {
+
             return null;
         }
 
@@ -524,26 +635,94 @@ export default function StartAttendance() {
 
 
     // =================================================
+    // FORMAT DATE
+    // =================================================
+
+    const formatDateTime = (
+        value
+    ) => {
+
+        if (!value) {
+            return "—";
+        }
+
+        const parsed =
+            parseDateTime(value);
+
+        if (!parsed) {
+            return String(value);
+        }
+
+        return parsed.toLocaleString(
+            "en-IN",
+            {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: true,
+            }
+        );
+    };
+
+
+    const formatDateOnly = (
+        value
+    ) => {
+
+        if (!value) {
+            return "—";
+        }
+
+        const parsed =
+            parseDateTime(value);
+
+        if (!parsed) {
+            return String(value);
+        }
+
+        return parsed.toLocaleDateString(
+            "en-IN",
+            {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+            }
+        );
+    };
+
+
+    const formatTimeOnly = (
+        value
+    ) => {
+
+        if (!value) {
+            return "—";
+        }
+
+        const parsed =
+            parseDateTime(value);
+
+        if (!parsed) {
+            return String(value);
+        }
+
+        return parsed.toLocaleTimeString(
+            "en-IN",
+            {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: true,
+            }
+        );
+    };
+
+
+    // =================================================
     // START COUNTDOWN
-    //
-    // IMPORTANT:
-    //
-    // The countdown is based on the LOCAL QR creation
-    // time for display.
-    //
-    // This guarantees:
-    //
-    // 15
-    // 14
-    // 13
-    // ...
-    // 2
-    // 1
-    // new QR
-    // 15
-    //
-    // The BACKEND remains authoritative for whether
-    // the QR is actually valid.
     // =================================================
 
     const startCountdown =
@@ -552,28 +731,30 @@ export default function StartAttendance() {
                 expiresAt,
                 resetTo15 = false
             ) => {
+
                 clearCountdownTimer();
 
-                // -----------------------------------------
-                // If this is a NEW QR, start a fresh
-                // 15-second local countdown.
-                // -----------------------------------------
-
                 if (resetTo15) {
+
                     localQRExpiryRef.current =
                         Date.now() +
                         QR_EXPIRY_SECONDS *
                             1000;
+
                 } else {
+
                     const parsed =
                         parseDateTime(
                             expiresAt
                         );
 
                     if (parsed) {
+
                         localQRExpiryRef.current =
                             parsed.getTime();
+
                     } else {
+
                         localQRExpiryRef.current =
                             Date.now() +
                             QR_EXPIRY_SECONDS *
@@ -583,6 +764,7 @@ export default function StartAttendance() {
 
                 const updateCountdown =
                     () => {
+
                         if (
                             !mountedRef.current
                         ) {
@@ -592,6 +774,7 @@ export default function StartAttendance() {
                         if (
                             !localQRExpiryRef.current
                         ) {
+
                             setTimeLeft(
                                 QR_EXPIRY_SECONDS
                             );
@@ -623,9 +806,9 @@ export default function StartAttendance() {
                         );
 
                         if (
-                            safeRemaining <=
-                            0
+                            safeRemaining <= 0
                         ) {
+
                             clearCountdownTimer();
                         }
                     };
@@ -645,7 +828,7 @@ export default function StartAttendance() {
 
 
     // =================================================
-    // SCHEDULE BACKEND EXPIRY CHECK
+    // SCHEDULE QR EXPIRY
     // =================================================
 
     const scheduleQRRefresh =
@@ -654,6 +837,7 @@ export default function StartAttendance() {
                 expiresAt,
                 sessionId
             ) => {
+
                 clearQRRefreshTimer();
 
                 if (
@@ -683,6 +867,7 @@ export default function StartAttendance() {
                 qrRefreshTimerRef.current =
                     setTimeout(
                         () => {
+
                             if (
                                 !mountedRef.current
                             ) {
@@ -690,8 +875,7 @@ export default function StartAttendance() {
                             }
 
                             if (
-                                sessionRef
-                                    .current
+                                sessionRef.current
                                     ?.session_id !==
                                 sessionId
                             ) {
@@ -701,6 +885,7 @@ export default function StartAttendance() {
                             if (
                                 refreshQRRef.current
                             ) {
+
                                 refreshQRRef.current(
                                     sessionId,
                                     {
@@ -721,23 +906,12 @@ export default function StartAttendance() {
 
     // =================================================
     // QR POLLING
-    //
-    // Every second the teacher page asks the backend
-    // for the current QR.
-    //
-    // If student scanned QR #1:
-    //
-    // Backend:
-    //
-    // QR #1 → invalid
-    // QR #2 → generated
-    //
-    // Polling detects token change.
     // =================================================
 
     const startQRPolling =
         useCallback(
             (sessionId) => {
+
                 clearQRPolling();
 
                 if (!sessionId) {
@@ -747,6 +921,7 @@ export default function StartAttendance() {
                 qrPollingTimerRef.current =
                     setInterval(
                         () => {
+
                             if (
                                 !mountedRef.current
                             ) {
@@ -782,6 +957,7 @@ export default function StartAttendance() {
                             if (
                                 refreshQRRef.current
                             ) {
+
                                 refreshQRRef.current(
                                     sessionId,
                                     {
@@ -801,6 +977,420 @@ export default function StartAttendance() {
 
 
     // =================================================
+    // EXTRACT ATTENDANCE RECORDS
+    // =================================================
+
+    const extractAttendanceRecords = (
+        data
+    ) => {
+
+        if (!data) {
+            return [];
+        }
+
+        if (
+            Array.isArray(data)
+        ) {
+
+            return data;
+        }
+
+        const candidates = [
+            data.records,
+            data.attendance,
+            data.rows,
+            data.data,
+            data.data?.records,
+            data.data?.attendance,
+            data.data?.rows,
+        ];
+
+        for (
+            const candidate of candidates
+        ) {
+
+            if (
+                Array.isArray(candidate)
+            ) {
+
+                return candidate;
+            }
+        }
+
+        return [];
+    };
+
+
+    // =================================================
+    // ATTENDANCE STATISTICS
+    // =================================================
+
+    const calculateAttendanceStats = (
+        records
+    ) => {
+
+        const safeRecords =
+            Array.isArray(records)
+                ? records
+                : [];
+
+        const total =
+            safeRecords.length;
+
+        const present =
+            safeRecords.filter(
+                (item) =>
+                    String(
+                        item?.status || ""
+                    ).toUpperCase() ===
+                    "PRESENT"
+            ).length;
+
+        const late =
+            safeRecords.filter(
+                (item) =>
+                    String(
+                        item?.status || ""
+                    ).toUpperCase() ===
+                    "LATE"
+            ).length;
+
+        const attended =
+            present +
+            late;
+
+        const percentage =
+            total > 0
+                ? Math.round(
+                      (
+                          attended /
+                          total
+                      ) *
+                          100
+                  )
+                : 0;
+
+        return {
+            total,
+            present,
+            late,
+            absent:
+                Math.max(
+                    0,
+                    total - attended
+                ),
+            percentage,
+        };
+    };
+
+
+    // =================================================
+    // FIND LATEST ATTENDANCE
+    // =================================================
+
+    const findLatestAttendance = (
+        records
+    ) => {
+
+        if (
+            !Array.isArray(records) ||
+            records.length === 0
+        ) {
+
+            return null;
+        }
+
+        const sorted =
+            [...records].sort(
+                (a, b) => {
+
+                    const aDate =
+                        parseDateTime(
+                            a?.scanned_at ||
+                            a?.attendance_time ||
+                            a?.created_at
+                        );
+
+                    const bDate =
+                        parseDateTime(
+                            b?.scanned_at ||
+                            b?.attendance_time ||
+                            b?.created_at
+                        );
+
+                    const aTime =
+                        aDate
+                            ? aDate.getTime()
+                            : 0;
+
+                    const bTime =
+                        bDate
+                            ? bDate.getTime()
+                            : 0;
+
+                    return bTime - aTime;
+                }
+            );
+
+        return sorted[0];
+    };
+
+
+    // =================================================
+    // LOAD ATTENDANCE RECORDS
+    //
+    // This is the important part for the staff screen.
+    //
+    // After student scan:
+    //
+    // Student
+    //    ↓
+    // Backend INSERT attendance
+    //    ↓
+    // Staff page polls this endpoint
+    //    ↓
+    // Latest student information appears
+    // =================================================
+
+    const loadAttendanceRecords =
+        useCallback(
+            async (
+                sessionId,
+                {
+                    silent = true,
+                } = {}
+            ) => {
+
+                if (!sessionId) {
+                    return null;
+                }
+
+                if (
+                    attendanceRequestInProgress.current
+                ) {
+                    return null;
+                }
+
+                attendanceRequestInProgress.current =
+                    true;
+
+                if (
+                    !silent &&
+                    mountedRef.current
+                ) {
+
+                    setAttendanceLoading(
+                        true
+                    );
+                }
+
+                try {
+
+                    const token =
+                        getAuthToken();
+
+                    if (!token) {
+                        return null;
+                    }
+
+                    const response =
+                        await fetch(
+                            `${API_URL}/attendance/session/${sessionId}`,
+                            {
+                                method:
+                                    "GET",
+
+                                headers: {
+                                    Authorization:
+                                        `Bearer ${token}`,
+
+                                    "Content-Type":
+                                        "application/json",
+                                },
+                            }
+                        );
+
+                    const data =
+                        await getResponseData(
+                            response
+                        );
+
+                    if (
+                        !response.ok
+                    ) {
+
+                        throw new Error(
+                            getErrorMessage(
+                                data,
+                                `Failed to load attendance (${response.status})`
+                            )
+                        );
+                    }
+
+                    if (
+                        !mountedRef.current
+                    ) {
+                        return null;
+                    }
+
+                    const records =
+                        extractAttendanceRecords(
+                            data
+                        );
+
+                    const stats =
+                        calculateAttendanceStats(
+                            records
+                        );
+
+                    setAttendanceRecords(
+                        records
+                    );
+
+                    setAttendanceStats(
+                        stats
+                    );
+
+                    const latest =
+                        findLatestAttendance(
+                            records
+                        );
+
+                    if (latest) {
+
+                        latestAttendanceIdRef.current =
+                            latest.attendance_id;
+
+                        setLatestAttendance(
+                            latest
+                        );
+                    } else {
+
+                        latestAttendanceIdRef.current =
+                            null;
+
+                        setLatestAttendance(
+                            null
+                        );
+                    }
+
+                    return {
+                        records,
+                        stats,
+                        latest,
+                    };
+
+                } catch (err) {
+
+                    console.error(
+                        "Load attendance records error:",
+                        err
+                    );
+
+                    if (
+                        !silent &&
+                        mountedRef.current
+                    ) {
+
+                        setError(
+                            err.message ||
+                                "Unable to load attendance records."
+                        );
+                    }
+
+                    return null;
+
+                } finally {
+
+                    attendanceRequestInProgress.current =
+                        false;
+
+                    if (
+                        !silent &&
+                        mountedRef.current
+                    ) {
+
+                        setAttendanceLoading(
+                            false
+                        );
+                    }
+                }
+            },
+            []
+        );
+
+
+    // =================================================
+    // START ATTENDANCE POLLING
+    // =================================================
+
+    const startAttendancePolling =
+        useCallback(
+            (sessionId) => {
+
+                clearAttendancePolling();
+
+                if (!sessionId) {
+                    return;
+                }
+
+                // Immediately load once.
+                loadAttendanceRecords(
+                    sessionId,
+                    {
+                        silent: true,
+                    }
+                );
+
+                attendancePollingTimerRef.current =
+                    setInterval(
+                        () => {
+
+                            if (
+                                !mountedRef.current
+                            ) {
+                                return;
+                            }
+
+                            const currentSession =
+                                sessionRef.current;
+
+                            if (
+                                !currentSession
+                            ) {
+                                return;
+                            }
+
+                            if (
+                                String(
+                                    currentSession.status ||
+                                    "ACTIVE"
+                                ).toUpperCase() !==
+                                "ACTIVE"
+                            ) {
+                                return;
+                            }
+
+                            loadAttendanceRecords(
+                                sessionId,
+                                {
+                                    silent: true,
+                                }
+                            );
+
+                        },
+                        ATTENDANCE_POLL_INTERVAL
+                    );
+
+            },
+            [
+                clearAttendancePolling,
+                loadAttendanceRecords,
+            ]
+        );
+
+
+    // =================================================
     // REFRESH QR
     // =================================================
 
@@ -813,6 +1403,7 @@ export default function StartAttendance() {
                     silent = false,
                 } = {}
             ) => {
+
                 if (!sessionId) {
                     return;
                 }
@@ -830,16 +1421,19 @@ export default function StartAttendance() {
                     !silent &&
                     mountedRef.current
                 ) {
+
                     setRefreshingQR(
                         true
                     );
                 }
 
                 try {
+
                     const token =
                         getAuthToken();
 
                     if (!token) {
+
                         throw new Error(
                             "Authentication token not found. Please login again."
                         );
@@ -875,7 +1469,10 @@ export default function StartAttendance() {
                             response
                         );
 
-                    if (!response.ok) {
+                    if (
+                        !response.ok
+                    ) {
+
                         throw new Error(
                             getErrorMessage(
                                 data,
@@ -889,10 +1486,6 @@ export default function StartAttendance() {
                     ) {
                         return;
                     }
-
-                    // -----------------------------------------
-                    // EXTRACT DATA
-                    // -----------------------------------------
 
                     const returnedSession =
                         extractSession(
@@ -914,6 +1507,7 @@ export default function StartAttendance() {
                             data
                         );
 
+
                     // -----------------------------------------
                     // UPDATE SESSION
                     // -----------------------------------------
@@ -921,6 +1515,7 @@ export default function StartAttendance() {
                     if (
                         returnedSession
                     ) {
+
                         const mergedSession =
                             {
                                 ...(sessionRef.current ||
@@ -936,6 +1531,7 @@ export default function StartAttendance() {
                         );
                     }
 
+
                     // -----------------------------------------
                     // TOKEN COMPARISON
                     // -----------------------------------------
@@ -946,24 +1542,26 @@ export default function StartAttendance() {
                     const tokenChanged =
                         Boolean(
                             returnedQRToken &&
-                                previousToken &&
-                                returnedQRToken !==
-                                    previousToken
+                            previousToken &&
+                            returnedQRToken !==
+                                previousToken
                         );
 
                     const firstQR =
                         Boolean(
                             returnedQRToken &&
-                                !previousToken
+                            !previousToken
                         );
 
+
                     // -----------------------------------------
-                    // TOKEN UPDATE
+                    // UPDATE TOKEN
                     // -----------------------------------------
 
                     if (
                         returnedQRToken
                     ) {
+
                         qrTokenRef.current =
                             returnedQRToken;
 
@@ -972,8 +1570,9 @@ export default function StartAttendance() {
                         );
                     }
 
+
                     // -----------------------------------------
-                    // NEW QR DETECTED
+                    // UPDATE IMAGE
                     // -----------------------------------------
 
                     if (
@@ -985,49 +1584,44 @@ export default function StartAttendance() {
                             !qrImage
                         )
                     ) {
+
                         setQrImage(
                             returnedQRImage
                         );
                     }
 
+
                     // -----------------------------------------
-                    // EXPIRY UPDATE
+                    // EXPIRY
                     // -----------------------------------------
 
                     if (
                         returnedQRExpiry
                     ) {
+
                         qrExpiryRef.current =
                             returnedQRExpiry;
-
-                        // -------------------------------------
-                        // NEW TOKEN
-                        //
-                        // ALWAYS restart visible countdown
-                        // from 15 seconds.
-                        // -------------------------------------
 
                         if (
                             firstQR ||
                             tokenChanged ||
                             force
                         ) {
+
                             startCountdown(
                                 returnedQRExpiry,
                                 true
                             );
+
                         } else if (
                             !localQRExpiryRef.current
                         ) {
+
                             startCountdown(
                                 returnedQRExpiry,
                                 true
                             );
                         }
-
-                        // -------------------------------------
-                        // Backend controls actual expiry.
-                        // -------------------------------------
 
                         scheduleQRRefresh(
                             returnedQRExpiry,
@@ -1035,22 +1629,33 @@ export default function StartAttendance() {
                         );
                     }
 
+
                     // -----------------------------------------
-                    // IF TOKEN CHANGED BECAUSE A STUDENT
-                    // SUCCESSFULLY SCANNED
+                    // STUDENT SCANNED
+                    //
+                    // TOKEN CHANGE means:
+                    //
+                    // OLD QR
+                    //    ↓
+                    // Student scan
+                    //    ↓
+                    // Backend records attendance
+                    //    ↓
+                    // OLD QR invalidated
+                    //    ↓
+                    // NEW QR
                     // -----------------------------------------
 
                     if (
                         tokenChanged
                     ) {
+
                         setMessage(
                             "Attendance recorded. New QR generated automatically."
                         );
 
                         setError("");
 
-                        // Ensure countdown is exactly
-                        // a fresh QR countdown.
                         setTimeLeft(
                             QR_EXPIRY_SECONDS
                         );
@@ -1064,7 +1669,17 @@ export default function StartAttendance() {
                             returnedQRExpiry,
                             true
                         );
+
+                        // Immediately request latest
+                        // attendance information.
+                        loadAttendanceRecords(
+                            sessionId,
+                            {
+                                silent: true,
+                            }
+                        );
                     }
+
 
                     // -----------------------------------------
                     // FORCE REFRESH
@@ -1074,6 +1689,7 @@ export default function StartAttendance() {
                         force &&
                         returnedQRToken
                     ) {
+
                         setMessage(
                             "New QR code generated successfully."
                         );
@@ -1094,24 +1710,27 @@ export default function StartAttendance() {
                             true
                         );
                     }
+
                 } catch (err) {
+
                     console.error(
                         "QR refresh error:",
                         err
                     );
 
-                    // Do not show repeated errors caused
-                    // by background polling.
                     if (
                         !silent &&
                         mountedRef.current
                     ) {
+
                         setError(
                             err.message ||
                                 "Unable to refresh QR code."
                         );
                     }
+
                 } finally {
+
                     refreshInProgress.current =
                         false;
 
@@ -1119,6 +1738,7 @@ export default function StartAttendance() {
                         !silent &&
                         mountedRef.current
                     ) {
+
                         setRefreshingQR(
                             false
                         );
@@ -1129,17 +1749,20 @@ export default function StartAttendance() {
                 qrImage,
                 scheduleQRRefresh,
                 startCountdown,
+                loadAttendanceRecords,
             ]
         );
 
 
     // =================================================
-    // KEEP LATEST REFRESH FUNCTION
+    // KEEP LATEST QR FUNCTION
     // =================================================
 
     useEffect(() => {
+
         refreshQRRef.current =
             refreshQR;
+
     }, [
         refreshQR,
     ]);
@@ -1152,6 +1775,7 @@ export default function StartAttendance() {
     const fetchSubjects =
         useCallback(
             async () => {
+
                 if (
                     !mountedRef.current
                 ) {
@@ -1165,10 +1789,12 @@ export default function StartAttendance() {
                 setError("");
 
                 try {
+
                     const token =
                         getAuthToken();
 
                     if (!token) {
+
                         throw new Error(
                             "Authentication token not found. Please login again."
                         );
@@ -1196,7 +1822,10 @@ export default function StartAttendance() {
                             response
                         );
 
-                    if (!response.ok) {
+                    if (
+                        !response.ok
+                    ) {
+
                         throw new Error(
                             getErrorMessage(
                                 data,
@@ -1215,47 +1844,54 @@ export default function StartAttendance() {
                         [];
 
                     if (
-                        Array.isArray(
-                            data
-                        )
+                        Array.isArray(data)
                     ) {
+
                         subjectList =
                             data;
+
                     } else if (
                         Array.isArray(
                             data.data
                         )
                     ) {
+
                         subjectList =
                             data.data;
+
                     } else if (
                         Array.isArray(
                             data.subjects
                         )
                     ) {
+
                         subjectList =
                             data.subjects;
+
                     } else if (
                         Array.isArray(
                             data.allocations
                         )
                     ) {
+
                         subjectList =
                             data.allocations;
+
                     } else if (
                         Array.isArray(
-                            data.data
-                                ?.subjects
+                            data.data?.subjects
                         )
                     ) {
+
                         subjectList =
                             data.data.subjects;
+
                     } else if (
                         Array.isArray(
-                            data.data
-                                ?.allocations
+                            data.data?.allocations
                         )
                     ) {
+
                         subjectList =
                             data.data.allocations;
                     }
@@ -1268,11 +1904,14 @@ export default function StartAttendance() {
                         subjectList.length ===
                         0
                     ) {
+
                         setMessage(
                             "No subject/class allocation found."
                         );
                     }
+
                 } catch (err) {
+
                     console.error(
                         "Fetch subjects error:",
                         err
@@ -1281,15 +1920,19 @@ export default function StartAttendance() {
                     if (
                         mountedRef.current
                     ) {
+
                         setError(
                             err.message ||
                                 "Unable to load subjects."
                         );
                     }
+
                 } finally {
+
                     if (
                         mountedRef.current
                     ) {
+
                         setLoadingSubjects(
                             false
                         );
@@ -1307,7 +1950,9 @@ export default function StartAttendance() {
     const fetchActiveSession =
         useCallback(
             async () => {
+
                 try {
+
                     const token =
                         getAuthToken();
 
@@ -1340,12 +1985,14 @@ export default function StartAttendance() {
                     if (
                         !response.ok
                     ) {
+
                         if (
                             response.status ===
                                 404 ||
                             response.status ===
                                 204
                         ) {
+
                             return;
                         }
 
@@ -1388,28 +2035,31 @@ export default function StartAttendance() {
                         activeSession
                     );
 
-                    // -----------------------------------------
-                    // Get current QR
-                    // -----------------------------------------
-
                     await refreshQR(
                         sessionId,
                         {
-                            force:
-                                false,
-                            silent:
-                                false,
+                            force: false,
+                            silent: false,
                         }
                     );
 
-                    // -----------------------------------------
-                    // Start monitoring
-                    // -----------------------------------------
+                    await loadAttendanceRecords(
+                        sessionId,
+                        {
+                            silent: true,
+                        }
+                    );
 
                     startQRPolling(
                         sessionId
                     );
+
+                    startAttendancePolling(
+                        sessionId
+                    );
+
                 } catch (err) {
+
                     console.error(
                         "Fetch active session error:",
                         err
@@ -1418,6 +2068,7 @@ export default function StartAttendance() {
                     if (
                         mountedRef.current
                     ) {
+
                         setError(
                             err.message ||
                                 "Unable to load active session."
@@ -1427,7 +2078,9 @@ export default function StartAttendance() {
             },
             [
                 refreshQR,
+                loadAttendanceRecords,
                 startQRPolling,
+                startAttendancePolling,
             ]
         );
 
@@ -1437,6 +2090,7 @@ export default function StartAttendance() {
     // =================================================
 
     useEffect(() => {
+
         mountedRef.current =
             true;
 
@@ -1451,6 +2105,7 @@ export default function StartAttendance() {
 
         const load =
             async () => {
+
                 await fetchSubjects();
 
                 await fetchActiveSession();
@@ -1459,18 +2114,23 @@ export default function StartAttendance() {
         load();
 
         return () => {
+
             mountedRef.current =
                 false;
 
-            clearAllQRTimers();
+            clearAllTimers();
 
             refreshInProgress.current =
                 false;
+
+            attendanceRequestInProgress.current =
+                false;
         };
+
     }, [
         fetchSubjects,
         fetchActiveSession,
-        clearAllQRTimers,
+        clearAllTimers,
     ]);
 
 
@@ -1480,6 +2140,7 @@ export default function StartAttendance() {
 
     const startSession =
         async () => {
+
             if (
                 startingRef.current
             ) {
@@ -1489,6 +2150,7 @@ export default function StartAttendance() {
             if (
                 !selectedAllocation
             ) {
+
                 setError(
                     "Please select a subject/class first."
                 );
@@ -1506,10 +2168,12 @@ export default function StartAttendance() {
             setMessage("");
 
             try {
+
                 const token =
                     getAuthToken();
 
                 if (!token) {
+
                     throw new Error(
                         "Authentication token not found. Please login again."
                     );
@@ -1520,8 +2184,8 @@ export default function StartAttendance() {
                         (item) =>
                             String(
                                 item?.allocation_id ??
-                                    item?.subject_allocation_id ??
-                                    item?.id
+                                item?.subject_allocation_id ??
+                                item?.id
                             ) ===
                             String(
                                 selectedAllocation
@@ -1547,6 +2211,7 @@ export default function StartAttendance() {
                 };
 
                 if (subjectId) {
+
                     body.subject_id =
                         Number(
                             subjectId
@@ -1585,7 +2250,10 @@ export default function StartAttendance() {
                         response
                     );
 
-                if (!response.ok) {
+                if (
+                    !response.ok
+                ) {
+
                     throw new Error(
                         getErrorMessage(
                             data,
@@ -1608,6 +2276,7 @@ export default function StartAttendance() {
                 if (
                     !newSession
                 ) {
+
                     throw new Error(
                         "Attendance session was created but session data was not returned."
                     );
@@ -1617,16 +2286,18 @@ export default function StartAttendance() {
                     newSession.session_id;
 
                 if (!sessionId) {
+
                     throw new Error(
                         "Attendance session ID was not returned."
                     );
                 }
 
+
                 // -----------------------------------------
-                // Clear previous QR
+                // CLEAR OLD QR
                 // -----------------------------------------
 
-                clearAllQRTimers();
+                clearAllTimers();
 
                 qrTokenRef.current =
                     "";
@@ -1645,8 +2316,31 @@ export default function StartAttendance() {
                     QR_EXPIRY_SECONDS
                 );
 
+
                 // -----------------------------------------
-                // Set session
+                // CLEAR OLD ATTENDANCE
+                // -----------------------------------------
+
+                setAttendanceRecords([]);
+
+                setLatestAttendance(
+                    null
+                );
+
+                latestAttendanceIdRef.current =
+                    null;
+
+                setAttendanceStats({
+                    total: 0,
+                    present: 0,
+                    late: 0,
+                    absent: 0,
+                    percentage: 0,
+                });
+
+
+                // -----------------------------------------
+                // SET SESSION
                 // -----------------------------------------
 
                 sessionRef.current =
@@ -1656,8 +2350,9 @@ export default function StartAttendance() {
                     newSession
                 );
 
+
                 // -----------------------------------------
-                // QR returned during creation
+                // QR FROM CREATION RESPONSE
                 // -----------------------------------------
 
                 const createdQRImage =
@@ -1675,9 +2370,11 @@ export default function StartAttendance() {
                         data
                     );
 
+
                 if (
                     createdQRToken
                 ) {
+
                     qrTokenRef.current =
                         createdQRToken;
 
@@ -1686,21 +2383,24 @@ export default function StartAttendance() {
                     );
                 }
 
+
                 if (
                     createdQRImage
                 ) {
+
                     setQrImage(
                         createdQRImage
                     );
                 }
 
+
                 if (
                     createdQRExpiry
                 ) {
+
                     qrExpiryRef.current =
                         createdQRExpiry;
 
-                    // NEW QR = exactly 15 seconds
                     startCountdown(
                         createdQRExpiry,
                         true
@@ -1712,8 +2412,9 @@ export default function StartAttendance() {
                     );
                 }
 
+
                 // -----------------------------------------
-                // If QR was not included, fetch it.
+                // FETCH QR IF NEEDED
                 // -----------------------------------------
 
                 if (
@@ -1721,29 +2422,41 @@ export default function StartAttendance() {
                     !createdQRToken ||
                     !createdQRExpiry
                 ) {
+
                     await refreshQR(
                         sessionId,
                         {
-                            force:
-                                false,
-                            silent:
-                                false,
+                            force: false,
+                            silent: false,
                         }
                     );
                 }
 
+
                 // -----------------------------------------
-                // Start automatic QR monitoring.
+                // START QR MONITORING
                 // -----------------------------------------
 
                 startQRPolling(
                     sessionId
                 );
 
+
+                // -----------------------------------------
+                // START ATTENDANCE MONITORING
+                // -----------------------------------------
+
+                startAttendancePolling(
+                    sessionId
+                );
+
+
                 setMessage(
                     "Attendance started. QR code is active for 15 seconds."
                 );
+
             } catch (err) {
+
                 console.error(
                     "Start attendance error:",
                     err
@@ -1752,18 +2465,22 @@ export default function StartAttendance() {
                 if (
                     mountedRef.current
                 ) {
+
                     setError(
                         err.message ||
                             "Unable to start attendance."
                     );
                 }
+
             } finally {
+
                 startingRef.current =
                     false;
 
                 if (
                     mountedRef.current
                 ) {
+
                     setStarting(
                         false
                     );
@@ -1778,6 +2495,7 @@ export default function StartAttendance() {
 
     const closeSession =
         async () => {
+
             if (
                 closingRef.current ||
                 !sessionRef.current
@@ -1805,10 +2523,12 @@ export default function StartAttendance() {
             setMessage("");
 
             try {
+
                 const token =
                     getAuthToken();
 
                 if (!token) {
+
                     throw new Error(
                         "Authentication token not found. Please login again."
                     );
@@ -1817,6 +2537,24 @@ export default function StartAttendance() {
                 const sessionId =
                     sessionRef.current
                         .session_id;
+
+
+                // -----------------------------------------
+                // GET FINAL ATTENDANCE BEFORE CLOSE
+                // -----------------------------------------
+
+                const finalAttendance =
+                    await loadAttendanceRecords(
+                        sessionId,
+                        {
+                            silent: false,
+                        }
+                    );
+
+
+                // -----------------------------------------
+                // CLOSE SESSION
+                // -----------------------------------------
 
                 const response =
                     await fetch(
@@ -1840,7 +2578,10 @@ export default function StartAttendance() {
                         response
                     );
 
-                if (!response.ok) {
+                if (
+                    !response.ok
+                ) {
+
                     throw new Error(
                         getErrorMessage(
                             data,
@@ -1855,11 +2596,12 @@ export default function StartAttendance() {
                     return;
                 }
 
+
                 // -----------------------------------------
-                // STOP QR
+                // STOP TIMERS
                 // -----------------------------------------
 
-                clearAllQRTimers();
+                clearAllTimers();
 
                 refreshInProgress.current =
                     false;
@@ -1872,6 +2614,39 @@ export default function StartAttendance() {
 
                 localQRExpiryRef.current =
                     null;
+
+
+                // -----------------------------------------
+                // KEEP FINAL ATTENDANCE INFORMATION
+                // -----------------------------------------
+
+                if (
+                    finalAttendance
+                ) {
+
+                    setAttendanceRecords(
+                        finalAttendance.records ||
+                            []
+                    );
+
+                    setAttendanceStats(
+                        finalAttendance.stats ||
+                            calculateAttendanceStats(
+                                finalAttendance.records ||
+                                    []
+                            )
+                    );
+
+                    if (
+                        finalAttendance.latest
+                    ) {
+
+                        setLatestAttendance(
+                            finalAttendance.latest
+                        );
+                    }
+                }
+
 
                 // -----------------------------------------
                 // CLEAR SESSION
@@ -1890,12 +2665,15 @@ export default function StartAttendance() {
                     QR_EXPIRY_SECONDS
                 );
 
+
                 setMessage(
                     "Attendance session closed successfully."
                 );
 
                 setError("");
+
             } catch (err) {
+
                 console.error(
                     "Close attendance error:",
                     err
@@ -1904,18 +2682,22 @@ export default function StartAttendance() {
                 if (
                     mountedRef.current
                 ) {
+
                     setError(
                         err.message ||
                             "Unable to close attendance session."
                     );
                 }
+
             } finally {
+
                 closingRef.current =
                     false;
 
                 if (
                     mountedRef.current
                 ) {
+
                     setClosing(
                         false
                     );
@@ -1925,16 +2707,12 @@ export default function StartAttendance() {
 
 
     // =================================================
-    // MANUAL REFRESH
-    //
-    // force=true means:
-    // current QR becomes invalid
-    // new QR is generated
-    // countdown returns to 15
+    // MANUAL QR REFRESH
     // =================================================
 
     const manualRefreshQR =
         async () => {
+
             const sessionId =
                 sessionRef.current
                     ?.session_id;
@@ -1950,10 +2728,8 @@ export default function StartAttendance() {
             await refreshQR(
                 sessionId,
                 {
-                    force:
-                        true,
-                    silent:
-                        false,
+                    force: true,
+                    silent: false,
                 }
             );
         };
@@ -1965,6 +2741,7 @@ export default function StartAttendance() {
 
     const getSubjectName =
         (item) => {
+
             return (
                 item?.subject_name ||
                 item?.subject
@@ -1983,6 +2760,7 @@ export default function StartAttendance() {
 
     const getSubjectCode =
         (item) => {
+
             return (
                 item?.subject_code ||
                 item?.subject
@@ -1995,11 +2773,13 @@ export default function StartAttendance() {
 
     const getClassName =
         (item) => {
+
             return (
                 item?.class_name ||
                 item?.class
                     ?.class_name ||
                 item?.className ||
+                item?.class_year ||
                 ""
             );
         };
@@ -2007,12 +2787,154 @@ export default function StartAttendance() {
 
     const getSectionName =
         (item) => {
+
             return (
                 item?.section_name ||
+                item?.class_section ||
                 item?.section ||
                 item?.sectionName ||
                 ""
             );
+        };
+
+
+    // =================================================
+    // LATEST ATTENDANCE HELPERS
+    // =================================================
+
+    const getStudentName =
+        (record) => {
+
+            return (
+                record?.student_name ||
+                record?.name ||
+                record?.student?.name ||
+                record?.student?.student_name ||
+                "Student"
+            );
+        };
+
+
+    const getRegisterNumber =
+        (record) => {
+
+            return (
+                record?.register_number ||
+                record?.student_code ||
+                record?.student?.register_number ||
+                record?.student?.student_code ||
+                "—"
+            );
+        };
+
+
+    const getStaffName =
+        (record) => {
+
+            return (
+                record?.staff_name ||
+                record?.staff?.name ||
+                record?.teacher_name ||
+                record?.teacher?.name ||
+                session?.staff_name ||
+                session?.staff?.name ||
+                "Staff"
+            );
+        };
+
+
+    const getStaffCode =
+        (record) => {
+
+            return (
+                record?.staff_code ||
+                record?.staff?.staff_code ||
+                session?.staff_code ||
+                "—"
+            );
+        };
+
+
+    const getAttendanceSubject =
+        (record) => {
+
+            return (
+                record?.subject_name ||
+                record?.subject?.subject_name ||
+                session?.subject_name ||
+                getSubjectName(
+                    selectedSubject
+                )
+            );
+        };
+
+
+    const getAttendanceSubjectCode =
+        (record) => {
+
+            return (
+                record?.subject_code ||
+                record?.subject?.subject_code ||
+                session?.subject_code ||
+                getSubjectCode(
+                    selectedSubject
+                )
+            );
+        };
+
+
+    const getAttendanceClass =
+        (record) => {
+
+            return (
+                record?.class_name ||
+                record?.class?.class_name ||
+                record?.class_year ||
+                session?.class_name ||
+                getClassName(
+                    selectedSubject
+                ) ||
+                "—"
+            );
+        };
+
+
+    const getAttendanceSection =
+        (record) => {
+
+            return (
+                record?.class_section ||
+                record?.section_name ||
+                record?.section ||
+                record?.class?.section ||
+                session?.class_section ||
+                getSectionName(
+                    selectedSubject
+                ) ||
+                "—"
+            );
+        };
+
+
+    const getAttendanceDate =
+        (record) => {
+
+            return (
+                record?.scanned_at ||
+                record?.attendance_time ||
+                record?.created_at ||
+                null
+            );
+        };
+
+
+    const getAttendanceStatus =
+        (record) => {
+
+            return String(
+                record?.status ||
+                "PRESENT"
+            ).toUpperCase();
         };
 
 
@@ -2032,8 +2954,8 @@ export default function StartAttendance() {
             (item) =>
                 String(
                     item?.allocation_id ??
-                        item?.subject_allocation_id ??
-                        item?.id
+                    item?.subject_allocation_id ??
+                    item?.id
                 ) ===
                 String(
                     selectedAllocation
@@ -2056,6 +2978,7 @@ export default function StartAttendance() {
                     "24px",
             }}
         >
+
             {/* =========================================
                 HEADER
             ========================================= */}
@@ -2072,6 +2995,7 @@ export default function StartAttendance() {
                         "24px",
                 }}
             >
+
                 <div
                     style={{
                         width:
@@ -2098,6 +3022,7 @@ export default function StartAttendance() {
                 </div>
 
                 <div>
+
                     <h1
                         style={{
                             margin:
@@ -2123,6 +3048,7 @@ export default function StartAttendance() {
                         QR code for student
                         attendance.
                     </p>
+
                 </div>
             </div>
 
@@ -2164,7 +3090,7 @@ export default function StartAttendance() {
 
 
             {/* =========================================
-                ERROR MESSAGE
+                ERROR
             ========================================= */}
 
             {error && (
@@ -2272,17 +3198,14 @@ export default function StartAttendance() {
                         onChange={(
                             event
                         ) => {
+
                             setSelectedAllocation(
                                 event.target.value
                             );
 
-                            setError(
-                                ""
-                            );
+                            setError("");
 
-                            setMessage(
-                                ""
-                            );
+                            setMessage("");
                         }}
                         disabled={
                             loadingSubjects ||
@@ -2308,6 +3231,7 @@ export default function StartAttendance() {
                                 "18px",
                         }}
                     >
+
                         <option value="">
                             {loadingSubjects
                                 ? "Loading subjects..."
@@ -2319,6 +3243,7 @@ export default function StartAttendance() {
                                 item,
                                 index
                             ) => {
+
                                 const id =
                                     item?.allocation_id ??
                                     item?.subject_allocation_id ??
@@ -2367,6 +3292,7 @@ export default function StartAttendance() {
                                 );
                             }
                         )}
+
                     </select>
 
 
@@ -2388,6 +3314,7 @@ export default function StartAttendance() {
                                         "1px solid #e2e8f0",
                                 }}
                             >
+
                                 <div
                                     style={{
                                         display:
@@ -2446,6 +3373,7 @@ export default function StartAttendance() {
                                         )}
                                     </div>
                                 )}
+
                             </div>
                         )}
 
@@ -2467,6 +3395,7 @@ export default function StartAttendance() {
                                     "1px solid #bfdbfe",
                             }}
                         >
+
                             <div
                                 style={{
                                     display:
@@ -2485,8 +3414,7 @@ export default function StartAttendance() {
                             >
                                 <FaCheckCircle />
 
-                                Attendance
-                                Active
+                                Attendance Active
                             </div>
 
                             <div
@@ -2501,6 +3429,7 @@ export default function StartAttendance() {
                                         "#475569",
                                 }}
                             >
+
                                 <div>
                                     <strong>
                                         Subject:
@@ -2509,6 +3438,19 @@ export default function StartAttendance() {
                                         session
                                     )}
                                 </div>
+
+                                {getSubjectCode(
+                                    session
+                                ) && (
+                                    <div>
+                                        <strong>
+                                            Code:
+                                        </strong>{" "}
+                                        {getSubjectCode(
+                                            session
+                                        )}
+                                    </div>
+                                )}
 
                                 {getClassName(
                                     session
@@ -2546,6 +3488,7 @@ export default function StartAttendance() {
                                         }
                                     </div>
                                 )}
+
                             </div>
                         </div>
                     )}
@@ -2568,6 +3511,7 @@ export default function StartAttendance() {
                                     "1px solid #e2e8f0",
                             }}
                         >
+
                             <div
                                 style={{
                                     display:
@@ -2578,6 +3522,7 @@ export default function StartAttendance() {
                                         "space-between",
                                 }}
                             >
+
                                 <div
                                     style={{
                                         display:
@@ -2612,6 +3557,7 @@ export default function StartAttendance() {
                                 >
                                     LIVE
                                 </span>
+
                             </div>
 
                             <p
@@ -2634,6 +3580,7 @@ export default function StartAttendance() {
                                 displayed
                                 automatically.
                             </p>
+
                         </div>
                     )}
 
@@ -2641,6 +3588,7 @@ export default function StartAttendance() {
                     {/* BUTTONS */}
 
                     {!isActive ? (
+
                         <button
                             type="button"
                             onClick={
@@ -2693,8 +3641,11 @@ export default function StartAttendance() {
                             {starting
                                 ? "Starting..."
                                 : "Start Attendance"}
+
                         </button>
+
                     ) : (
+
                         <div
                             style={{
                                 display:
@@ -2703,8 +3654,6 @@ export default function StartAttendance() {
                                     "10px",
                             }}
                         >
-
-                            {/* MANUAL NEW QR */}
 
                             <button
                                 type="button"
@@ -2755,10 +3704,9 @@ export default function StartAttendance() {
                                 {refreshingQR
                                     ? "Refreshing..."
                                     : "Generate New QR"}
+
                             </button>
 
-
-                            {/* CLOSE */}
 
                             <button
                                 type="button"
@@ -2806,9 +3754,12 @@ export default function StartAttendance() {
                                 {closing
                                     ? "Closing..."
                                     : "Close Attendance"}
+
                             </button>
+
                         </div>
                     )}
+
                 </div>
 
 
@@ -2862,13 +3813,10 @@ export default function StartAttendance() {
                     </div>
 
 
-                    {/* QR AVAILABLE */}
-
                     {isActive &&
                     qrImage ? (
-                        <>
-                            {/* QR IMAGE */}
 
+                        <>
                             <div
                                 style={{
                                     display:
@@ -2879,6 +3827,7 @@ export default function StartAttendance() {
                                         "18px",
                                 }}
                             >
+
                                 <div
                                     style={{
                                         width:
@@ -2901,6 +3850,7 @@ export default function StartAttendance() {
                                             "center",
                                     }}
                                 >
+
                                     <img
                                         src={
                                             qrImage
@@ -2915,7 +3865,9 @@ export default function StartAttendance() {
                                                 "contain",
                                         }}
                                     />
+
                                 </div>
+
                             </div>
 
 
@@ -2935,6 +3887,7 @@ export default function StartAttendance() {
                                         "10px",
                                 }}
                             >
+
                                 <FaClock />
 
                                 <span
@@ -2947,10 +3900,9 @@ export default function StartAttendance() {
                                 >
                                     {timeLeft}s
                                 </span>
+
                             </div>
 
-
-                            {/* EXPLANATION */}
 
                             <div
                                 style={{
@@ -2986,6 +3938,7 @@ export default function StartAttendance() {
                                         "18px",
                                 }}
                             >
+
                                 <div
                                     style={{
                                         height:
@@ -3011,10 +3964,9 @@ export default function StartAttendance() {
                                             "width 0.25s linear",
                                     }}
                                 />
+
                             </div>
 
-
-                            {/* LIVE STATUS */}
 
                             <div
                                 style={{
@@ -3040,14 +3992,14 @@ export default function StartAttendance() {
                                         "8px",
                                 }}
                             >
+
                                 <FaCheckCircle />
 
                                 Waiting for student
                                 scans...
+
                             </div>
 
-
-                            {/* TOKEN STATUS */}
 
                             <div
                                 style={{
@@ -3061,10 +4013,10 @@ export default function StartAttendance() {
                             >
                                 QR token active
                             </div>
-                        </>
-                    ) : isActive ? (
 
-                        /* LOADING QR */
+                        </>
+
+                    ) : isActive ? (
 
                         <div
                             style={{
@@ -3084,6 +4036,7 @@ export default function StartAttendance() {
                                     "14px",
                             }}
                         >
+
                             <FaQrcode
                                 style={{
                                     fontSize:
@@ -3138,10 +4091,10 @@ export default function StartAttendance() {
 
                                 Retry
                             </button>
-                        </div>
-                    ) : (
 
-                        /* NO SESSION */
+                        </div>
+
+                    ) : (
 
                         <div
                             style={{
@@ -3161,6 +4114,7 @@ export default function StartAttendance() {
                                     "14px",
                             }}
                         >
+
                             <FaQrcode
                                 style={{
                                     fontSize:
@@ -3194,15 +4148,977 @@ export default function StartAttendance() {
                                 to generate
                                 the QR code.
                             </span>
+
                         </div>
                     )}
+
                 </div>
             </div>
 
 
             {/* =============================================
-                AUTOMATIC QR FLOW INFORMATION
-            ============================================== */}
+                LATEST SCAN INFORMATION
+            ============================================= */}
+
+            {isActive && (
+                <div
+                    style={{
+                        marginTop:
+                            "24px",
+                        background:
+                            "#ffffff",
+                        border:
+                            "1px solid #e2e8f0",
+                        borderRadius:
+                            "16px",
+                        padding:
+                            "24px",
+                        boxShadow:
+                            "0 4px 18px rgba(15, 23, 42, 0.05)",
+                    }}
+                >
+
+                    <div
+                        style={{
+                            display:
+                                "flex",
+                            alignItems:
+                                "center",
+                            justifyContent:
+                                "space-between",
+                            gap:
+                                "12px",
+                            marginBottom:
+                                "18px",
+                        }}
+                    >
+
+                        <div
+                            style={{
+                                display:
+                                    "flex",
+                                alignItems:
+                                    "center",
+                                gap:
+                                    "10px",
+                            }}
+                        >
+
+                            <div
+                                style={{
+                                    width:
+                                        "42px",
+                                    height:
+                                        "42px",
+                                    borderRadius:
+                                        "10px",
+                                    display:
+                                        "flex",
+                                    alignItems:
+                                        "center",
+                                    justifyContent:
+                                        "center",
+                                    background:
+                                        "#ecfdf5",
+                                    color:
+                                        "#059669",
+                                }}
+                            >
+                                <FaUserGraduate />
+                            </div>
+
+                            <div>
+
+                                <h2
+                                    style={{
+                                        margin:
+                                            0,
+                                        fontSize:
+                                            "20px",
+                                    }}
+                                >
+                                    Latest Student Scan
+                                </h2>
+
+                                <p
+                                    style={{
+                                        margin:
+                                            "4px 0 0",
+                                        color:
+                                            "#64748b",
+                                        fontSize:
+                                            "13px",
+                                    }}
+                                >
+                                    Updates automatically after
+                                    every successful scan.
+                                </p>
+
+                            </div>
+
+                        </div>
+
+                        <div
+                            style={{
+                                display:
+                                    "flex",
+                                alignItems:
+                                    "center",
+                                gap:
+                                    "7px",
+                                color:
+                                    "#16a34a",
+                                fontSize:
+                                    "12px",
+                                fontWeight:
+                                    700,
+                            }}
+                        >
+
+                            <FaSyncAlt
+                                style={{
+                                    animation:
+                                        "spin 1s linear infinite",
+                                }}
+                            />
+
+                            LIVE
+
+                        </div>
+
+                    </div>
+
+
+                    {!latestAttendance ? (
+
+                        <div
+                            style={{
+                                padding:
+                                    "30px 20px",
+                                borderRadius:
+                                    "12px",
+                                background:
+                                    "#f8fafc",
+                                border:
+                                    "1px dashed #cbd5e1",
+                                textAlign:
+                                    "center",
+                                color:
+                                    "#64748b",
+                            }}
+                        >
+
+                            <FaUserGraduate
+                                style={{
+                                    fontSize:
+                                        "38px",
+                                    opacity:
+                                        0.35,
+                                    marginBottom:
+                                        "10px",
+                                }}
+                            />
+
+                            <div
+                                style={{
+                                    fontWeight:
+                                        700,
+                                    marginBottom:
+                                        "5px",
+                                }}
+                            >
+                                Waiting for student scan
+                            </div>
+
+                            <div
+                                style={{
+                                    fontSize:
+                                        "13px",
+                                }}
+                            >
+                                Student information will appear
+                                here immediately after a
+                                successful QR scan.
+                            </div>
+
+                        </div>
+
+                    ) : (
+
+                        <div>
+
+                            {/* SUCCESS HEADER */}
+
+                            <div
+                                style={{
+                                    padding:
+                                        "14px 16px",
+                                    marginBottom:
+                                        "18px",
+                                    borderRadius:
+                                        "10px",
+                                    background:
+                                        "#ecfdf5",
+                                    border:
+                                        "1px solid #a7f3d0",
+                                    color:
+                                        "#047857",
+                                    display:
+                                        "flex",
+                                    alignItems:
+                                        "center",
+                                    gap:
+                                        "9px",
+                                    fontWeight:
+                                        700,
+                                }}
+                            >
+
+                                <FaCheckCircle />
+
+                                Attendance recorded successfully
+
+                            </div>
+
+
+                            {/* INFORMATION GRID */}
+
+                            <div
+                                className="latest-attendance-grid"
+                                style={{
+                                    display:
+                                        "grid",
+                                    gridTemplateColumns:
+                                        "repeat(2, minmax(0, 1fr))",
+                                    gap:
+                                        "12px",
+                                }}
+                            >
+
+                                {/* STUDENT */}
+
+                                <div
+                                    style={{
+                                        padding:
+                                            "15px",
+                                        borderRadius:
+                                            "11px",
+                                        background:
+                                            "#f8fafc",
+                                        border:
+                                            "1px solid #e2e8f0",
+                                    }}
+                                >
+
+                                    <div
+                                        style={{
+                                            display:
+                                                "flex",
+                                            alignItems:
+                                                "center",
+                                            gap:
+                                                "8px",
+                                            color:
+                                                "#64748b",
+                                            fontSize:
+                                                "12px",
+                                            marginBottom:
+                                                "7px",
+                                        }}
+                                    >
+
+                                        <FaUserGraduate />
+
+                                        STUDENT
+
+                                    </div>
+
+                                    <strong
+                                        style={{
+                                            fontSize:
+                                                "16px",
+                                        }}
+                                    >
+                                        {
+                                            getStudentName(
+                                                latestAttendance
+                                            )
+                                        }
+                                    </strong>
+
+                                </div>
+
+
+                                {/* REGISTER NUMBER */}
+
+                                <div
+                                    style={{
+                                        padding:
+                                            "15px",
+                                        borderRadius:
+                                            "11px",
+                                        background:
+                                            "#f8fafc",
+                                        border:
+                                            "1px solid #e2e8f0",
+                                    }}
+                                >
+
+                                    <div
+                                        style={{
+                                            display:
+                                                "flex",
+                                            alignItems:
+                                                "center",
+                                            gap:
+                                                "8px",
+                                            color:
+                                                "#64748b",
+                                            fontSize:
+                                                "12px",
+                                            marginBottom:
+                                                "7px",
+                                        }}
+                                    >
+
+                                        <FaIdCard />
+
+                                        REGISTER NUMBER
+
+                                    </div>
+
+                                    <strong
+                                        style={{
+                                            fontSize:
+                                                "16px",
+                                        }}
+                                    >
+                                        {
+                                            getRegisterNumber(
+                                                latestAttendance
+                                            )
+                                        }
+                                    </strong>
+
+                                </div>
+
+
+                                {/* STAFF */}
+
+                                <div
+                                    style={{
+                                        padding:
+                                            "15px",
+                                        borderRadius:
+                                            "11px",
+                                        background:
+                                            "#f8fafc",
+                                        border:
+                                            "1px solid #e2e8f0",
+                                    }}
+                                >
+
+                                    <div
+                                        style={{
+                                            display:
+                                                "flex",
+                                            alignItems:
+                                                "center",
+                                            gap:
+                                                "8px",
+                                            color:
+                                                "#64748b",
+                                            fontSize:
+                                                "12px",
+                                            marginBottom:
+                                                "7px",
+                                        }}
+                                    >
+
+                                        <FaChalkboardTeacher />
+
+                                        STAFF
+
+                                    </div>
+
+                                    <strong
+                                        style={{
+                                            fontSize:
+                                                "15px",
+                                        }}
+                                    >
+                                        {
+                                            getStaffName(
+                                                latestAttendance
+                                            )
+                                        }
+                                    </strong>
+
+                                    <div
+                                        style={{
+                                            color:
+                                                "#64748b",
+                                            fontSize:
+                                                "12px",
+                                            marginTop:
+                                                "4px",
+                                        }}
+                                    >
+                                        Code:{" "}
+                                        {
+                                            getStaffCode(
+                                                latestAttendance
+                                            )
+                                        }
+                                    </div>
+
+                                </div>
+
+
+                                {/* SUBJECT */}
+
+                                <div
+                                    style={{
+                                        padding:
+                                            "15px",
+                                        borderRadius:
+                                            "11px",
+                                        background:
+                                            "#f8fafc",
+                                        border:
+                                            "1px solid #e2e8f0",
+                                    }}
+                                >
+
+                                    <div
+                                        style={{
+                                            display:
+                                                "flex",
+                                            alignItems:
+                                                "center",
+                                            gap:
+                                                "8px",
+                                            color:
+                                                "#64748b",
+                                            fontSize:
+                                                "12px",
+                                            marginBottom:
+                                                "7px",
+                                        }}
+                                    >
+
+                                        <FaBook />
+
+                                        SUBJECT
+
+                                    </div>
+
+                                    <strong
+                                        style={{
+                                            fontSize:
+                                                "15px",
+                                        }}
+                                    >
+                                        {
+                                            getAttendanceSubject(
+                                                latestAttendance
+                                            )
+                                        }
+                                    </strong>
+
+                                    <div
+                                        style={{
+                                            color:
+                                                "#64748b",
+                                            fontSize:
+                                                "12px",
+                                            marginTop:
+                                                "4px",
+                                        }}
+                                    >
+                                        Code:{" "}
+                                        {
+                                            getAttendanceSubjectCode(
+                                                latestAttendance
+                                            ) ||
+                                            "—"
+                                        }
+                                    </div>
+
+                                </div>
+
+
+                                {/* CLASS */}
+
+                                <div
+                                    style={{
+                                        padding:
+                                            "15px",
+                                        borderRadius:
+                                            "11px",
+                                        background:
+                                            "#f8fafc",
+                                        border:
+                                            "1px solid #e2e8f0",
+                                    }}
+                                >
+
+                                    <div
+                                        style={{
+                                            color:
+                                                "#64748b",
+                                            fontSize:
+                                                "12px",
+                                            marginBottom:
+                                                "7px",
+                                        }}
+                                    >
+                                        CLASS
+                                    </div>
+
+                                    <strong
+                                        style={{
+                                            fontSize:
+                                                "15px",
+                                        }}
+                                    >
+                                        {
+                                            getAttendanceClass(
+                                                latestAttendance
+                                            )
+                                        }
+                                    </strong>
+
+                                    <div
+                                        style={{
+                                            color:
+                                                "#64748b",
+                                            fontSize:
+                                                "12px",
+                                            marginTop:
+                                                "4px",
+                                        }}
+                                    >
+                                        Section:{" "}
+                                        {
+                                            getAttendanceSection(
+                                                latestAttendance
+                                            )
+                                        }
+                                    </div>
+
+                                </div>
+
+
+                                {/* DATE */}
+
+                                <div
+                                    style={{
+                                        padding:
+                                            "15px",
+                                        borderRadius:
+                                            "11px",
+                                        background:
+                                            "#f8fafc",
+                                        border:
+                                            "1px solid #e2e8f0",
+                                    }}
+                                >
+
+                                    <div
+                                        style={{
+                                            display:
+                                                "flex",
+                                            alignItems:
+                                                "center",
+                                            gap:
+                                                "8px",
+                                            color:
+                                                "#64748b",
+                                            fontSize:
+                                                "12px",
+                                            marginBottom:
+                                                "7px",
+                                        }}
+                                    >
+
+                                        <FaCalendarAlt />
+
+                                        DATE
+
+                                    </div>
+
+                                    <strong
+                                        style={{
+                                            fontSize:
+                                                "15px",
+                                        }}
+                                    >
+                                        {
+                                            formatDateOnly(
+                                                getAttendanceDate(
+                                                    latestAttendance
+                                                )
+                                            )
+                                        }
+                                    </strong>
+
+                                </div>
+
+
+                                {/* SCAN TIME */}
+
+                                <div
+                                    style={{
+                                        padding:
+                                            "15px",
+                                        borderRadius:
+                                            "11px",
+                                        background:
+                                            "#f8fafc",
+                                        border:
+                                            "1px solid #e2e8f0",
+                                    }}
+                                >
+
+                                    <div
+                                        style={{
+                                            display:
+                                                "flex",
+                                            alignItems:
+                                                "center",
+                                            gap:
+                                                "8px",
+                                            color:
+                                                "#64748b",
+                                            fontSize:
+                                                "12px",
+                                            marginBottom:
+                                                "7px",
+                                        }}
+                                    >
+
+                                        <FaClock />
+
+                                        SCAN TIME
+
+                                    </div>
+
+                                    <strong
+                                        style={{
+                                            fontSize:
+                                                "15px",
+                                        }}
+                                    >
+                                        {
+                                            formatTimeOnly(
+                                                getAttendanceDate(
+                                                    latestAttendance
+                                                )
+                                            )
+                                        }
+                                    </strong>
+
+                                </div>
+
+
+                                {/* STATUS */}
+
+                                <div
+                                    style={{
+                                        padding:
+                                            "15px",
+                                        borderRadius:
+                                            "11px",
+                                        background:
+                                            getAttendanceStatus(
+                                                latestAttendance
+                                            ) ===
+                                            "LATE"
+                                                ? "#fffbeb"
+                                                : "#ecfdf5",
+                                        border:
+                                            getAttendanceStatus(
+                                                latestAttendance
+                                            ) ===
+                                            "LATE"
+                                                ? "1px solid #fde68a"
+                                                : "1px solid #a7f3d0",
+                                    }}
+                                >
+
+                                    <div
+                                        style={{
+                                            display:
+                                                "flex",
+                                            alignItems:
+                                                "center",
+                                            gap:
+                                                "8px",
+                                            color:
+                                                getAttendanceStatus(
+                                                    latestAttendance
+                                                ) ===
+                                                "LATE"
+                                                    ? "#b45309"
+                                                    : "#047857",
+                                            fontSize:
+                                                "12px",
+                                            marginBottom:
+                                                "7px",
+                                        }}
+                                    >
+
+                                        <FaCheckCircle />
+
+                                        STATUS
+
+                                    </div>
+
+                                    <strong
+                                        style={{
+                                            fontSize:
+                                                "18px",
+                                            color:
+                                                getAttendanceStatus(
+                                                    latestAttendance
+                                                ) ===
+                                                "LATE"
+                                                    ? "#b45309"
+                                                    : "#047857",
+                                        }}
+                                    >
+                                        {
+                                            getAttendanceStatus(
+                                                latestAttendance
+                                            )
+                                        }
+                                    </strong>
+
+                                </div>
+
+                            </div>
+
+
+                            {/* ATTENDANCE ID */}
+
+                            {latestAttendance.attendance_id && (
+                                <div
+                                    style={{
+                                        marginTop:
+                                            "14px",
+                                        fontSize:
+                                            "12px",
+                                        color:
+                                            "#94a3b8",
+                                        textAlign:
+                                            "right",
+                                    }}
+                                >
+                                    Attendance ID:{" "}
+                                    {
+                                        latestAttendance.attendance_id
+                                    }
+                                </div>
+                            )}
+
+                        </div>
+                    )}
+
+                </div>
+            )}
+
+
+            {/* =============================================
+                ATTENDANCE SUMMARY
+            ============================================= */}
+
+            {isActive && (
+                <div
+                    style={{
+                        marginTop:
+                            "24px",
+                        display:
+                            "grid",
+                        gridTemplateColumns:
+                            "repeat(4, minmax(0, 1fr))",
+                        gap:
+                            "14px",
+                    }}
+                >
+
+                    <div
+                        style={{
+                            background:
+                                "#ffffff",
+                            border:
+                                "1px solid #e2e8f0",
+                            borderRadius:
+                                "14px",
+                            padding:
+                                "18px",
+                        }}
+                    >
+
+                        <div
+                            style={{
+                                color:
+                                    "#64748b",
+                                fontSize:
+                                    "12px",
+                                marginBottom:
+                                    "7px",
+                            }}
+                        >
+                            TOTAL SCANS
+                        </div>
+
+                        <strong
+                            style={{
+                                fontSize:
+                                    "26px",
+                            }}
+                        >
+                            {
+                                attendanceStats.total
+                            }
+                        </strong>
+
+                    </div>
+
+
+                    <div
+                        style={{
+                            background:
+                                "#ecfdf5",
+                            border:
+                                "1px solid #a7f3d0",
+                            borderRadius:
+                                "14px",
+                            padding:
+                                "18px",
+                        }}
+                    >
+
+                        <div
+                            style={{
+                                color:
+                                    "#047857",
+                                fontSize:
+                                    "12px",
+                                marginBottom:
+                                    "7px",
+                            }}
+                        >
+                            PRESENT
+                        </div>
+
+                        <strong
+                            style={{
+                                fontSize:
+                                    "26px",
+                                color:
+                                    "#047857",
+                            }}
+                        >
+                            {
+                                attendanceStats.present
+                            }
+                        </strong>
+
+                    </div>
+
+
+                    <div
+                        style={{
+                            background:
+                                "#fffbeb",
+                            border:
+                                "1px solid #fde68a",
+                            borderRadius:
+                                "14px",
+                            padding:
+                                "18px",
+                        }}
+                    >
+
+                        <div
+                            style={{
+                                color:
+                                    "#b45309",
+                                fontSize:
+                                    "12px",
+                                marginBottom:
+                                    "7px",
+                            }}
+                        >
+                            LATE
+                        </div>
+
+                        <strong
+                            style={{
+                                fontSize:
+                                    "26px",
+                                color:
+                                    "#b45309",
+                            }}
+                        >
+                            {
+                                attendanceStats.late
+                            }
+                        </strong>
+
+                    </div>
+
+
+                    <div
+                        style={{
+                            background:
+                                "#eff6ff",
+                            border:
+                                "1px solid #bfdbfe",
+                            borderRadius:
+                                "14px",
+                            padding:
+                                "18px",
+                        }}
+                    >
+
+                        <div
+                            style={{
+                                color:
+                                    "#1d4ed8",
+                                fontSize:
+                                    "12px",
+                                marginBottom:
+                                    "7px",
+                            }}
+                        >
+                            ATTENDANCE %
+                        </div>
+
+                        <strong
+                            style={{
+                                fontSize:
+                                    "26px",
+                                color:
+                                    "#1d4ed8",
+                            }}
+                        >
+                            {
+                                attendanceStats.percentage
+                            }%
+                        </strong>
+
+                    </div>
+
+                </div>
+            )}
+
+
+            {/* =============================================
+                AUTOMATIC QR FLOW
+            ============================================= */}
 
             <div
                 style={{
@@ -3218,6 +5134,7 @@ export default function StartAttendance() {
                         "22px",
                 }}
             >
+
                 <h3
                     style={{
                         marginTop:
@@ -3228,6 +5145,7 @@ export default function StartAttendance() {
                             "18px",
                     }}
                 >
+
                     <FaUsers
                         style={{
                             marginRight:
@@ -3236,6 +5154,7 @@ export default function StartAttendance() {
                     />
 
                     Automatic QR Rotation
+
                 </h3>
 
 
@@ -3260,6 +5179,7 @@ export default function StartAttendance() {
                                 "#f8fafc",
                         }}
                     >
+
                         <strong>
                             1. QR #1
                         </strong>
@@ -3283,6 +5203,7 @@ export default function StartAttendance() {
                             begins at 15
                             seconds.
                         </p>
+
                     </div>
 
 
@@ -3296,6 +5217,7 @@ export default function StartAttendance() {
                                 "#f8fafc",
                         }}
                     >
+
                         <strong>
                             2. Student Scans
                         </strong>
@@ -3319,6 +5241,7 @@ export default function StartAttendance() {
                             prevents reuse
                             of the old QR.
                         </p>
+
                     </div>
 
 
@@ -3332,8 +5255,9 @@ export default function StartAttendance() {
                                 "#f8fafc",
                         }}
                     >
+
                         <strong>
-                            3. QR #2
+                            3. Attendance Shown
                         </strong>
 
                         <p
@@ -3348,13 +5272,15 @@ export default function StartAttendance() {
                                     1.5,
                             }}
                         >
-                            After a successful
-                            scan, the backend
-                            creates a new QR.
-                            The teacher screen
-                            detects it
-                            automatically.
+                            Student name,
+                            register number,
+                            subject, staff,
+                            class, date,
+                            time and status
+                            appear automatically
+                            on this screen.
                         </p>
+
                     </div>
 
 
@@ -3368,8 +5294,9 @@ export default function StartAttendance() {
                                 "#f8fafc",
                         }}
                     >
+
                         <strong>
-                            4. 15 Seconds
+                            4. QR #2
                         </strong>
 
                         <p
@@ -3384,20 +5311,25 @@ export default function StartAttendance() {
                                     1.5,
                             }}
                         >
-                            If nobody scans,
-                            the QR expires
-                            and the backend
+                            After the
+                            successful scan,
+                            the backend
                             creates the next
-                            QR automatically.
+                            QR and the
+                            countdown returns
+                            to 15 seconds.
                         </p>
+
                     </div>
+
                 </div>
+
             </div>
 
 
             {/* =============================================
                 RESPONSIVE + ANIMATION
-            ============================================== */}
+            ============================================= */}
 
             <style>
                 {`
@@ -3415,9 +5347,20 @@ export default function StartAttendance() {
                         .start-attendance-grid {
                             grid-template-columns: 1fr !important;
                         }
+
+                        .latest-attendance-grid {
+                            grid-template-columns: 1fr !important;
+                        }
+                    }
+
+                    @media (max-width: 650px) {
+                        .start-attendance-grid {
+                            grid-template-columns: 1fr !important;
+                        }
                     }
                 `}
             </style>
+
         </div>
     );
 }
