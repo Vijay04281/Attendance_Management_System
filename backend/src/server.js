@@ -36,68 +36,14 @@ const assignmentRoutes =
 const attendanceRoutes =
     require("./routes/attendanceRoutes");
 
-// =====================================================
-// ATTENDANCE SESSION ROUTES
-// =====================================================
-
 const attendanceSessionRoutes =
-    require(
-        "./routes/attendanceSessionRoutes"
-    );
-
-// =====================================================
-// SUBJECT ALLOCATION ROUTES
-// =====================================================
-//
-// Provides:
-//
-// GET    /api/subject-allocations
-// GET    /api/subject-allocations/staff
-// GET    /api/subject-allocations/:id
-// POST   /api/subject-allocations
-// PUT    /api/subject-allocations/:id
-// DELETE /api/subject-allocations/:id
-// =====================================================
+    require("./routes/attendanceSessionRoutes");
 
 const subjectAllocationRoutes =
-    require(
-        "./routes/subjectAllocationRoutes"
-    );
-
-// =====================================================
-// CLASS TEACHER ASSIGNMENT ROUTES
-// =====================================================
-//
-// Provides:
-//
-// GET    /api/class-teacher-assignments
-// GET    /api/class-teacher-assignments/:id
-// GET    /api/class-teacher-assignments/class/:classId
-// GET    /api/class-teacher-assignments/teacher/:userId
-// POST   /api/class-teacher-assignments
-// PUT    /api/class-teacher-assignments/:id
-// DELETE /api/class-teacher-assignments/:id
-// =====================================================
+    require("./routes/subjectAllocationRoutes");
 
 const classTeacherAssignmentRoutes =
-    require(
-        "./routes/classTeacherAssignmentRoutes"
-    );
-
-// =====================================================
-// AUTH MIDDLEWARE
-// =====================================================
-
-const {
-    authenticateToken,
-    authorizeRoles
-} = require(
-    "./middleware/authMiddleware"
-);
-
-// =====================================================
-// OTHER ROUTES
-// =====================================================
+    require("./routes/classTeacherAssignmentRoutes");
 
 const timetableRoutes =
     require("./routes/timetableRoutes");
@@ -113,7 +59,7 @@ const app = express();
 
 // =====================================================
 // TRUST PROXY
-// Required for Render
+// Render
 // =====================================================
 
 app.set(
@@ -129,81 +75,47 @@ const PORT =
     process.env.PORT || 5000;
 
 // =====================================================
-// ALLOWED CORS ORIGINS
+// CORS
 // =====================================================
 
 const allowedOrigins = [
     "http://localhost:3000",
     "http://localhost:5173",
 
-    // Vercel frontend
     "https://attendance-management-system-inky-five.vercel.app",
 
-    // Render frontend
     "https://attendance-management-system-gpci.onrender.com"
 ];
-
-// =====================================================
-// CORS CONFIGURATION
-// =====================================================
 
 const corsOptions = {
     origin: (
         origin,
         callback
     ) => {
-        console.log(
-            "------------------------------------------------"
-        );
 
         console.log(
-            "CORS CHECK"
+            "CORS ORIGIN:",
+            origin || "NO ORIGIN"
         );
 
-        console.log(
-            "REQUEST ORIGIN:",
-            origin ||
-                "NO ORIGIN"
-        );
-
-        // ---------------------------------------------
-        // Requests without origin
-        // ---------------------------------------------
-
+        // Requests such as Postman/server-to-server
         if (!origin) {
-            console.log(
-                "CORS ALLOWED: request has no origin"
-            );
-
             return callback(
                 null,
                 true
             );
         }
-
-        // ---------------------------------------------
-        // Allowed origin
-        // ---------------------------------------------
 
         if (
             allowedOrigins.includes(
                 origin
             )
         ) {
-            console.log(
-                "CORS ALLOWED:",
-                origin
-            );
-
             return callback(
                 null,
                 true
             );
         }
-
-        // ---------------------------------------------
-        // Blocked origin
-        // ---------------------------------------------
 
         console.error(
             "CORS BLOCKED:",
@@ -240,8 +152,7 @@ const corsOptions = {
 };
 
 // =====================================================
-// CORS
-// MUST COME BEFORE API ROUTES
+// CORS MIDDLEWARE
 // =====================================================
 
 app.use(
@@ -249,7 +160,7 @@ app.use(
 );
 
 // =====================================================
-// EXPRESS 5 SAFE PREFLIGHT HANDLER
+// OPTIONS / PREFLIGHT
 // =====================================================
 
 app.use(
@@ -258,45 +169,15 @@ app.use(
         res,
         next
     ) => {
+
         if (
             req.method ===
             "OPTIONS"
         ) {
-            console.log(
-                "------------------------------------------------"
-            );
 
             console.log(
-                "CORS PREFLIGHT REQUEST"
-            );
-
-            console.log(
-                "ORIGIN:",
-                req.headers.origin ||
-                    "NO ORIGIN"
-            );
-
-            console.log(
-                "REQUEST METHOD:",
-                req.headers[
-                    "access-control-request-method"
-                ]
-            );
-
-            console.log(
-                "REQUEST HEADERS:",
-                req.headers[
-                    "access-control-request-headers"
-                ]
-            );
-
-            console.log(
-                "URL:",
+                "CORS PREFLIGHT:",
                 req.originalUrl
-            );
-
-            console.log(
-                "------------------------------------------------"
             );
 
             return res
@@ -335,33 +216,21 @@ app.use(
         res,
         next
     ) => {
+
         console.log(
             "================================================"
         );
 
         console.log(
-            "REQUEST"
-        );
-
-        console.log(
-            "METHOD :",
-            req.method
-        );
-
-        console.log(
-            "URL    :",
+            "REQUEST:",
+            req.method,
             req.originalUrl
         );
 
         console.log(
-            "ORIGIN :",
+            "ORIGIN:",
             req.headers.origin ||
                 "NO ORIGIN"
-        );
-
-        console.log(
-            "IP     :",
-            req.ip
         );
 
         console.log(
@@ -373,7 +242,7 @@ app.use(
 );
 
 // =====================================================
-// ROOT ROUTE
+// ROOT
 // =====================================================
 
 app.get(
@@ -382,6 +251,7 @@ app.get(
         req,
         res
     ) => {
+
         res.status(200).json({
             success: true,
 
@@ -399,7 +269,7 @@ app.get(
 );
 
 // =====================================================
-// HEALTH CHECK
+// HEALTH
 // =====================================================
 
 app.get(
@@ -408,6 +278,7 @@ app.get(
         req,
         res
     ) => {
+
         res.status(200).json({
             success: true,
 
@@ -430,6 +301,7 @@ app.get(
         req,
         res
     ) => {
+
         res.status(200).json({
             success: true,
 
@@ -454,7 +326,9 @@ const mountRoute = (
     route,
     name
 ) => {
+
     if (!route) {
+
         console.error(
             `❌ ${name} route is undefined`
         );
@@ -564,18 +438,15 @@ mountRoute(
 
 // =====================================================
 // SUBJECT ALLOCATIONS
-// =====================================================
 //
-// THIS WAS MISSING FROM YOUR PREVIOUS SERVER.JS.
+// ADMIN SUBJECT STAFF
 //
-// Admin Subject Staff requires:
-//
-// GET
-// POST
-// PUT
-// DELETE
-//
-// /api/subject-allocations
+// GET    /api/subject-allocations
+// GET    /api/subject-allocations/staff
+// GET    /api/subject-allocations/:id
+// POST   /api/subject-allocations
+// PUT    /api/subject-allocations/:id
+// DELETE /api/subject-allocations/:id
 // =====================================================
 
 mountRoute(
@@ -586,21 +457,14 @@ mountRoute(
 
 // =====================================================
 // CLASS TEACHER ASSIGNMENTS
-// =====================================================
 //
-// THIS FIXES:
+// ADMIN CLASS TEACHER ALLOCATION
 //
-// GET
-// /api/class-teacher-assignments
-//
-// POST
-// /api/class-teacher-assignments
-//
-// PUT
-// /api/class-teacher-assignments/:id
-//
-// DELETE
-// /api/class-teacher-assignments/:id
+// GET    /api/class-teacher-assignments
+// GET    /api/class-teacher-assignments/:id
+// POST   /api/class-teacher-assignments
+// PUT    /api/class-teacher-assignments/:id
+// DELETE /api/class-teacher-assignments/:id
 // =====================================================
 
 mountRoute(
@@ -622,11 +486,11 @@ mountRoute(
 // =====================================================
 // TIMETABLE COMPATIBILITY
 //
-// Supports frontend code using:
+// Supports:
 //
 // /api/timetables
 //
-// Existing:
+// as well as:
 //
 // /api/timetable
 // =====================================================
@@ -639,8 +503,6 @@ mountRoute(
 
 // =====================================================
 // CLASS TEACHER DASHBOARD
-//
-// Existing router
 // =====================================================
 
 mountRoute(
@@ -651,10 +513,6 @@ mountRoute(
 
 // =====================================================
 // CLASS TEACHER SINGULAR COMPATIBILITY
-//
-// Some frontend code may use:
-//
-// /api/class-teacher
 // =====================================================
 
 mountRoute(
@@ -664,7 +522,7 @@ mountRoute(
 );
 
 // =====================================================
-// DEVELOPMENT ROUTE CHECK
+// ROUTE CHECK
 // =====================================================
 
 app.get(
@@ -673,13 +531,16 @@ app.get(
         req,
         res
     ) => {
+
         res.status(200).json({
+
             success: true,
 
             message:
                 "Attendance API routes are mounted",
 
             routes: {
+
                 attendance:
                     "/api/attendance",
 
@@ -688,9 +549,6 @@ app.get(
 
                 activeSession:
                     "/api/attendance-sessions/active",
-
-                staffSubjects:
-                    "/api/attendance-sessions/staff-subjects",
 
                 subjectAllocations:
                     "/api/subject-allocations",
@@ -704,7 +562,7 @@ app.get(
                 timetable:
                     "/api/timetable",
 
-                timetablesCompatibility:
+                timetables:
                     "/api/timetables",
 
                 classTeachers:
@@ -721,7 +579,7 @@ app.get(
 );
 
 // =====================================================
-// 404 HANDLER
+// 404
 // =====================================================
 
 app.use(
@@ -729,6 +587,7 @@ app.use(
         req,
         res
     ) => {
+
         console.log(
             "404 ROUTE NOT FOUND:",
             req.method,
@@ -736,6 +595,7 @@ app.use(
         );
 
         res.status(404).json({
+
             success: false,
 
             message:
@@ -761,25 +621,22 @@ app.use(
         res,
         next
     ) => {
-        console.error(
-            "================================================"
-        );
-
-        console.error(
-            "GLOBAL ERROR"
-        );
 
         console.error(
             "================================================"
         );
 
         console.error(
-            "Message:",
+            "GLOBAL SERVER ERROR"
+        );
+
+        console.error(
+            "MESSAGE:",
             err.message
         );
 
         console.error(
-            "Method:",
+            "METHOD:",
             req.method
         );
 
@@ -789,21 +646,11 @@ app.use(
         );
 
         console.error(
-            "Origin:",
-            req.headers.origin ||
-                "NO ORIGIN"
-        );
-
-        console.error(
             "================================================"
         );
 
         const requestOrigin =
             req.headers.origin;
-
-        // ---------------------------------------------
-        // CORS HEADERS
-        // ---------------------------------------------
 
         if (
             requestOrigin &&
@@ -811,6 +658,7 @@ app.use(
                 requestOrigin
             )
         ) {
+
             res.header(
                 "Access-Control-Allow-Origin",
                 requestOrigin
@@ -827,17 +675,15 @@ app.use(
             );
         }
 
-        // ---------------------------------------------
-        // CORS ERROR
-        // ---------------------------------------------
-
         if (
             err.message &&
             err.message.includes(
                 "Origin not allowed by CORS"
             )
         ) {
+
             return res.status(403).json({
+
                 success: false,
 
                 message:
@@ -849,11 +695,8 @@ app.use(
             });
         }
 
-        // ---------------------------------------------
-        // GENERAL ERROR
-        // ---------------------------------------------
-
         return res.status(500).json({
+
             success: false,
 
             message:
@@ -872,160 +715,156 @@ app.use(
 // START SERVER
 // =====================================================
 
-const startServer = () => {
-    try {
-        app.listen(
-            PORT,
-            "0.0.0.0",
-            () => {
-                console.log("");
+const server =
+    app.listen(
+        PORT,
+        "0.0.0.0",
+        () => {
 
-                console.log(
-                    "================================================"
-                );
+            console.log("");
+            console.log(
+                "================================================"
+            );
 
-                console.log(
-                    "ATTENDANCE MANAGEMENT SYSTEM"
-                );
+            console.log(
+                "ATTENDANCE MANAGEMENT SYSTEM"
+            );
 
-                console.log(
-                    "================================================"
-                );
+            console.log(
+                "================================================"
+            );
 
-                console.log(
-                    `Server running on port: ${PORT}`
-                );
+            console.log(
+                `Server running on port ${PORT}`
+            );
 
-                console.log(
-                    `Environment: ${
-                        process.env.NODE_ENV ||
-                        "development"
-                    }`
-                );
+            console.log(
+                `Environment: ${
+                    process.env.NODE_ENV ||
+                    "development"
+                }`
+            );
 
-                console.log("");
+            console.log("");
 
-                console.log(
-                    "API ROUTES"
-                );
+            console.log(
+                "ROUTES:"
+            );
 
-                console.log("");
+            console.log(
+                "  /api/auth"
+            );
 
-                console.log(
-                    `  AUTH:                 /api/auth`
-                );
+            console.log(
+                "  /api/students"
+            );
 
-                console.log(
-                    `  STUDENTS:             /api/students`
-                );
+            console.log(
+                "  /api/staff"
+            );
 
-                console.log(
-                    `  STAFF:                /api/staff`
-                );
+            console.log(
+                "  /api/departments"
+            );
 
-                console.log(
-                    `  DEPARTMENTS:          /api/departments`
-                );
+            console.log(
+                "  /api/subjects"
+            );
 
-                console.log(
-                    `  SUBJECTS:              /api/subjects`
-                );
+            console.log(
+                "  /api/classes"
+            );
 
-                console.log(
-                    `  CLASSES:               /api/classes`
-                );
+            console.log(
+                "  /api/assignments"
+            );
 
-                console.log(
-                    `  ASSIGNMENTS:           /api/assignments`
-                );
+            console.log(
+                "  /api/attendance"
+            );
 
-                console.log(
-                    `  ATTENDANCE:            /api/attendance`
-                );
+            console.log(
+                "  /api/attendance-sessions"
+            );
 
-                console.log(
-                    `  ATTENDANCE SESSIONS:   /api/attendance-sessions`
-                );
+            console.log(
+                "  /api/subject-allocations"
+            );
 
-                console.log(
-                    `  SUBJECT ALLOCATIONS:   /api/subject-allocations`
-                );
+            console.log(
+                "  /api/class-teacher-assignments"
+            );
 
-                console.log(
-                    `  CLASS TEACHER ASSIGN:  /api/class-teacher-assignments`
-                );
+            console.log(
+                "  /api/timetable"
+            );
 
-                console.log(
-                    `  TIMETABLE:             /api/timetable`
-                );
+            console.log(
+                "  /api/timetables"
+            );
 
-                console.log(
-                    `  TIMETABLE COMPAT:      /api/timetables`
-                );
+            console.log(
+                "  /api/class-teachers"
+            );
 
-                console.log(
-                    `  CLASS TEACHERS:        /api/class-teachers`
-                );
+            console.log(
+                "  /api/class-teacher"
+            );
 
-                console.log(
-                    `  CLASS TEACHER COMPAT:  /api/class-teacher`
-                );
+            console.log("");
 
-                console.log("");
+            console.log(
+                "HEALTH:"
+            );
 
-                console.log(
-                    "HEALTH:"
-                );
+            console.log(
+                `http://localhost:${PORT}/health`
+            );
 
-                console.log(
-                    `  http://localhost:${PORT}/health`
-                );
+            console.log("");
 
-                console.log("");
+            console.log(
+                "ROUTE CHECK:"
+            );
 
-                console.log(
-                    "ROUTE CHECK:"
-                );
+            console.log(
+                `http://localhost:${PORT}/api/route-check`
+            );
 
-                console.log(
-                    `  http://localhost:${PORT}/api/route-check`
-                );
+            console.log("");
 
-                console.log("");
+            console.log(
+                "================================================"
+            );
 
-                console.log(
-                    "================================================"
-                );
+            console.log(
+                "SERVER READY"
+            );
 
-                console.log(
-                    "SERVER READY"
-                );
+            console.log(
+                "================================================"
+            );
 
-                console.log(
-                    "================================================"
-                );
+            console.log("");
+        }
+    );
 
-                console.log("");
-            }
-        );
-    } catch (error) {
+// =====================================================
+// SERVER ERROR HANDLING
+// =====================================================
+
+server.on(
+    "error",
+    (error) => {
+
         console.error(
-            "❌ Failed to start server"
-        );
-
-        console.error(
+            "SERVER START ERROR:",
             error
         );
 
         process.exit(1);
     }
-};
-
-// =====================================================
-// START
-// =====================================================
-
-startServer();
+);
 
 // =====================================================
 // EXPORT
