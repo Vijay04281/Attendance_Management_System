@@ -1,7 +1,94 @@
 // controllers/classTeacherController.js
 
 const db = require("../config/db");
+// =====================================================
+// ACTIVE CLASS ALLOCATION QUERY
+// =====================================================
 
+const ALLOCATION_SOURCE = `
+(
+    SELECT
+        allocation_id,
+        subject_id,
+        staff_id,
+        class_id
+    FROM subject_allocations
+
+    UNION
+
+    SELECT
+        NULL AS allocation_id,
+        subject_id,
+        staff_id,
+        class_id
+    FROM staff_subjects
+)
+`;
+
+// =====================================================
+// GET CLASS SUBJECTS
+// =====================================================
+
+const getClassSubjects = async (classId) => {
+    const [rows] = await db.query(
+        `
+        SELECT DISTINCT
+            sub.subject_id,
+            sub.subject_code,
+            sub.subject_name
+        FROM ${ALLOCATION_SOURCE} alloc
+
+        INNER JOIN subjects sub
+            ON sub.subject_id = alloc.subject_id
+
+        WHERE alloc.class_id = ?
+
+        ORDER BY sub.subject_name
+        `,
+        [classId]
+    );
+
+    return rows;
+};
+
+// =====================================================
+// GET CLASS STAFF
+// =====================================================
+
+const getAllocatedStaff = async (classId) => {
+    const [rows] = await db.query(
+        `
+        SELECT DISTINCT
+
+            st.staff_id,
+            st.user_id,
+            st.staff_code,
+            st.name,
+            st.email,
+
+            sub.subject_id,
+            sub.subject_code,
+            sub.subject_name
+
+        FROM ${ALLOCATION_SOURCE} alloc
+
+        INNER JOIN staff st
+            ON st.staff_id = alloc.staff_id
+
+        INNER JOIN subjects sub
+            ON sub.subject_id = alloc.subject_id
+
+        WHERE alloc.class_id = ?
+
+        ORDER BY
+            st.name,
+            sub.subject_name
+        `,
+        [classId]
+    );
+
+    return rows;
+};
 // =====================================================
 // HELPERS
 // =====================================================
@@ -321,76 +408,59 @@ const getDashboard = async (req, res) => {
         // -------------------------------------------------
         // TODAY'S SESSIONS
         // -------------------------------------------------
+const [sessionsToday] =
+    await db.query(
+        `
+        SELECT DISTINCT
 
-        const [sessionsToday] =
-            await db.query(
-                `
-                SELECT DISTINCT
+            ass.session_id,
+            ass.subject_id,
+            ass.staff_id,
+            ass.class_id,
 
-                    ass.session_id,
-                    ass.subject_id,
-                    ass.staff_id,
-                    ass.session_date,
-                    ass.start_time,
-                    ass.end_time,
-                    ass.status,
+            ass.session_date,
+            ass.start_time,
+            ass.end_time,
+            ass.status,
 
-                    sub.subject_code,
-                    sub.subject_name,
+            sub.subject_code,
+            sub.subject_name,
 
-                    st.staff_code,
-                    st.name AS staff_name,
+            st.staff_code,
+            st.name AS staff_name,
 
-                    c.class_id,
-                    c.year,
-                    c.section,
+            c.class_id,
+            c.year,
+            c.section,
 
-                    d.department_id,
-                    d.department_name,
-                    d.department_code
+            d.department_id,
+            d.department_name,
+            d.department_code
 
-                FROM attendance_sessions ass
+        FROM attendance_sessions ass
 
-                INNER JOIN subjects sub
-                    ON sub.subject_id =
-                       ass.subject_id
+        INNER JOIN subjects sub
+            ON sub.subject_id = ass.subject_id
 
-                INNER JOIN staff st
-                    ON st.staff_id =
-                       ass.staff_id
+        INNER JOIN staff st
+            ON st.staff_id = ass.staff_id
 
-                INNER JOIN staff_subjects ss
-                    ON ss.staff_id =
-                       ass.staff_id
+        INNER JOIN classes c
+            ON c.class_id = ass.class_id
 
-                   AND ss.subject_id =
-                       ass.subject_id
+        INNER JOIN departments d
+            ON d.department_id = c.department_id
 
-                   AND ss.class_id = ?
+        WHERE ass.class_id = ?
 
-                INNER JOIN classes c
-                    ON c.class_id =
-                       ss.class_id
+          AND DATE(ass.session_date) = CURDATE()
 
-                   AND c.department_id = ?
-
-                INNER JOIN departments d
-                    ON d.department_id =
-                       c.department_id
-
-                WHERE DATE(ass.session_date) =
-                      CURDATE()
-
-                ORDER BY
-                    ass.start_time ASC,
-                    ass.session_id ASC
-                `,
-                [
-                    classInfo.class_id,
-                    classInfo.department_id,
-                ]
-            );
-
+        ORDER BY
+            ass.start_time ASC,
+            ass.session_id ASC
+        `,
+        [classInfo.class_id]
+    );
         // -------------------------------------------------
         // TODAY'S ATTENDANCE
         //
@@ -402,65 +472,44 @@ const getDashboard = async (req, res) => {
         // attendance row for a student/session.
         // -------------------------------------------------
 
-        const [attendanceStats] =
-            await db.query(
-                `
-                SELECT
+       const [attendanceStats] =
+    await db.query(
+        `
+        SELECT
 
-                    COUNT(DISTINCT
-                        CASE
-                            WHEN UPPER(a.status) =
-                                 'PRESENT'
-                            THEN CONCAT(
-                                ass.session_id,
-                                '-',
-                                a.student_id
-                            )
-                        END
-                    ) AS present_count,
+            COUNT(
+                DISTINCT CASE
+                    WHEN UPPER(a.status) = 'PRESENT'
+                    THEN CONCAT(
+                        ass.session_id,
+                        '-',
+                        a.student_id
+                    )
+                END
+            ) AS present_count,
 
-                    COUNT(DISTINCT
-                        CASE
-                            WHEN UPPER(a.status) =
-                                 'LATE'
-                            THEN CONCAT(
-                                ass.session_id,
-                                '-',
-                                a.student_id
-                            )
-                        END
-                    ) AS late_count
+            COUNT(
+                DISTINCT CASE
+                    WHEN UPPER(a.status) = 'LATE'
+                    THEN CONCAT(
+                        ass.session_id,
+                        '-',
+                        a.student_id
+                    )
+                END
+            ) AS late_count
 
-                FROM attendance_sessions ass
+        FROM attendance_sessions ass
 
-                INNER JOIN staff_subjects ss
-                    ON ss.staff_id =
-                       ass.staff_id
+        LEFT JOIN attendance a
+            ON a.session_id = ass.session_id
 
-                   AND ss.subject_id =
-                       ass.subject_id
+        WHERE ass.class_id = ?
 
-                   AND ss.class_id = ?
-
-                INNER JOIN classes c
-                    ON c.class_id =
-                       ss.class_id
-
-                   AND c.department_id = ?
-
-                LEFT JOIN attendance a
-                    ON a.session_id =
-                       ass.session_id
-
-                WHERE DATE(ass.session_date) =
-                      CURDATE()
-                `,
-                [
-                    classInfo.class_id,
-                    classInfo.department_id,
-                ]
-            );
-
+          AND DATE(ass.session_date) = CURDATE()
+        `,
+        [classInfo.class_id]
+    );
         const stats =
             attendanceStats[0] || {};
 
@@ -635,24 +684,24 @@ const getSubjectAttendance = async (
                         END
                     ) AS late_count
 
-                FROM staff_subjects ss
+                FROM subject_allocations sa
 
                 INNER JOIN subjects sub
                     ON sub.subject_id =
-                       ss.subject_id
+                       sa.subject_id
 
                 INNER JOIN classes c
                     ON c.class_id =
-                       ss.class_id
+                       sa.class_id
 
                    AND c.department_id = ?
 
                 LEFT JOIN attendance_sessions ass
                     ON ass.staff_id =
-                       ss.staff_id
+                       sa.staff_id
 
                    AND ass.subject_id =
-                       ss.subject_id
+                       sa.subject_id
 
                    AND DATE(
                        ass.session_date
@@ -662,7 +711,7 @@ const getSubjectAttendance = async (
                     ON a.session_id =
                        ass.session_id
 
-                WHERE ss.class_id = ?
+                WHERE sa.class_id = ?
 
                 GROUP BY
                     sub.subject_id,
@@ -1178,11 +1227,7 @@ const getClassStaff = async (
 
         // -------------------------------------------------
         // STAFF_SUBJECTS
-        //
-        // NOTE:
-        // staff.phone removed because staff table
-        // does not contain phone.
-        // -------------------------------------------------
+        // --------------------------------------------
 
         let staffSubjectRows = [];
 
@@ -1959,8 +2004,9 @@ const getDailyAttendanceReport = async (
                     attendance_date ASC
                 `,
                 [
-                    classInfo.class_id,
+                    
                     classInfo.department_id,
+                    classInfo.class_id,
                     startDate,
                     endDate,
                 ]
@@ -2154,37 +2200,35 @@ const getSubjectAttendanceReport =
                             END
                         ) AS late_count
 
-                    FROM staff_subjects ss
+                    FROM attendance_sessions ass
 
-                    INNER JOIN subjects sub
-                        ON sub.subject_id =
-                           ss.subject_id
+INNER JOIN subjects sub
+    ON sub.subject_id =
+       ass.subject_id
 
-                    INNER JOIN classes c
-                        ON c.class_id =
-                           ss.class_id
+INNER JOIN classes c
+    ON c.class_id =
+       ass.class_id
 
-                       AND c.department_id = ?
+   AND c.department_id = ?
 
-                    LEFT JOIN attendance_sessions ass
-                        ON ass.staff_id =
-                           ss.staff_id
+LEFT JOIN attendance a
+    ON a.session_id =
+       ass.session_id
 
-                       AND ass.subject_id =
-                           ss.subject_id
+WHERE ass.class_id = ?
 
-                       AND ass.session_date >= ?
+  AND ass.session_date >= ?
 
-                       AND ass.session_date < DATE_ADD(
-                            ?,
-                            INTERVAL 1 DAY
-                          )
-
+  AND ass.session_date < DATE_ADD(
+        ?,
+        INTERVAL 1 DAY
+      )
                     LEFT JOIN attendance a
                         ON a.session_id =
                            ass.session_id
 
-                    WHERE ss.class_id = ?
+                    WHERE sa.class_id = ?
 
                     GROUP BY
                         sub.subject_id,
@@ -2196,9 +2240,10 @@ const getSubjectAttendanceReport =
                     `,
                     [
                         classInfo.department_id,
+                        classInfo.class_id,
                         startDate,
                         endDate,
-                        classInfo.class_id,
+                        
                     ]
                 );
 
@@ -2396,36 +2441,28 @@ const getDepartmentAttendanceReport =
 
                     FROM attendance_sessions ass
 
-                    INNER JOIN staff_subjects ss
-                        ON ss.staff_id =
-                           ass.staff_id
+INNER JOIN classes c
+    ON c.class_id =
+       ass.class_id
 
-                       AND ss.subject_id =
-                           ass.subject_id
+   AND c.department_id = ?
 
-                       AND ss.class_id = ?
+INNER JOIN departments d
+    ON d.department_id =
+       c.department_id
 
-                    INNER JOIN classes c
-                        ON c.class_id =
-                           ss.class_id
+LEFT JOIN attendance a
+    ON a.session_id =
+       ass.session_id
 
-                       AND c.department_id = ?
+WHERE ass.class_id = ?
 
-                    INNER JOIN departments d
-                        ON d.department_id =
-                           c.department_id
+  AND ass.session_date >= ?
 
-                    LEFT JOIN attendance a
-                        ON a.session_id =
-                           ass.session_id
-
-                    WHERE ass.session_date >= ?
-
-                      AND ass.session_date < DATE_ADD(
-                            ?,
-                            INTERVAL 1 DAY
-                          )
-
+  AND ass.session_date < DATE_ADD(
+        ?,
+        INTERVAL 1 DAY
+      )
                     GROUP BY
 
                         d.department_id,
@@ -2441,8 +2478,9 @@ const getDepartmentAttendanceReport =
                         c.section ASC
                     `,
                     [
-                        classInfo.class_id,
+                        
                         classInfo.department_id,
+                        classInfo.class_id,
                         startDate,
                         endDate,
                     ]
@@ -2636,41 +2674,34 @@ const getStudentAttendanceReport =
                                 THEN ass.session_id
                             END
                         ) AS late_sessions
+FROM attendance a
 
-                    FROM attendance a
+INNER JOIN attendance_sessions ass
+    ON ass.session_id =
+       a.session_id
 
-                    INNER JOIN attendance_sessions ass
-                        ON ass.session_id =
-                           a.session_id
+INNER JOIN classes c
+    ON c.class_id =
+       ass.class_id
 
-                    INNER JOIN staff_subjects ss
-                        ON ss.staff_id =
-                           ass.staff_id
+   AND c.department_id = ?
 
-                       AND ss.subject_id =
-                           ass.subject_id
+WHERE ass.class_id = ?
 
-                       AND ss.class_id = ?
+  AND ass.session_date >= ?
 
-                    INNER JOIN classes c
-                        ON c.class_id =
-                           ss.class_id
-
-                       AND c.department_id = ?
-
-                    WHERE ass.session_date >= ?
-
-                      AND ass.session_date < DATE_ADD(
-                            ?,
-                            INTERVAL 1 DAY
-                          )
+  AND ass.session_date < DATE_ADD(
+        ?,
+        INTERVAL 1 DAY
+      )
 
                     GROUP BY
                         a.student_id
                     `,
                     [
-                        classInfo.class_id,
+                        
                         classInfo.department_id,
+                        classInfo.class_id,
                         startDate,
                         endDate,
                     ]
@@ -2885,35 +2916,29 @@ const getClassAttendanceReport =
 
                     FROM attendance_sessions ass
 
-                    INNER JOIN staff_subjects ss
-                        ON ss.staff_id =
-                           ass.staff_id
+INNER JOIN classes c
+    ON c.class_id =
+       ass.class_id
 
-                       AND ss.subject_id =
-                           ass.subject_id
+   AND c.department_id = ?
 
-                       AND ss.class_id = ?
+LEFT JOIN attendance a
+    ON a.session_id =
+       ass.session_id
 
-                    INNER JOIN classes c
-                        ON c.class_id =
-                           ss.class_id
+WHERE ass.class_id = ?
 
-                       AND c.department_id = ?
+  AND ass.session_date >= ?
 
-                    LEFT JOIN attendance a
-                        ON a.session_id =
-                           ass.session_id
-
-                    WHERE ass.session_date >= ?
-
-                      AND ass.session_date < DATE_ADD(
-                            ?,
-                            INTERVAL 1 DAY
-                          )
+  AND ass.session_date < DATE_ADD(
+        ?,
+        INTERVAL 1 DAY
+      )
                     `,
                     [
-                        classInfo.class_id,
+                        
                         classInfo.department_id,
+                        classInfo.class_id,
                         startDate,
                         endDate,
                     ]
