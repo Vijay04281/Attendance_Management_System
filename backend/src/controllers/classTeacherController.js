@@ -3091,3 +3091,19 @@ module.exports = {
 
     getClassAttendanceReport,
 };
+console.log("================================");
+console.log("CLASS TEACHER EXPORT CHECK");
+console.log("getDashboard =", typeof getDashboard);
+console.log("getProfile =", typeof getProfile);
+console.log("getMyClass =", typeof getMyClass);
+console.log("getStudents =", typeof getStudents);
+console.log("getClassStaff =", typeof getClassStaff);
+console.log("getSubjectAttendance =", typeof getSubjectAttendance);
+console.log("getAbsentStudents =", typeof getAbsentStudents);
+console.log("getTimetable =", typeof getTimetable);
+console.log("getDailyAttendanceReport =", typeof getDailyAttendanceReport);
+console.log("getSubjectAttendanceReport =", typeof getSubjectAttendanceReport);
+console.log("getDepartmentAttendanceReport =", typeof getDepartmentAttendanceReport);
+console.log("getStudentAttendanceReport =", typeof getStudentAttendanceReport);
+console.log("getClassAttendanceReport =", typeof getClassAttendanceReport);
+console.log("================================");
