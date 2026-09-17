@@ -1907,42 +1907,65 @@ const createAttendanceSession = async (
         await connection.beginTransaction();
 
         const [result] =
-            await connection.query(
-                `
-                INSERT INTO attendance_sessions
-                (
-                    subject_id,
-                    staff_id,
-                    allocation_id,
-                    class_id,
-                    academic_year,
-                    session_date,
-                    start_time,
-                    end_time,
-                    qr_token,
-                    qr_expires_at,
-                    status
-                )
-                VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                `,
-                [
-                    subject_id,
-                    loggedInStaffId,
-                    allocation_id,
-                    class_id,
-                    academic_year,
-                    session_date,
-                    start_time,
-                    end_time || null,
-                    qr_token,
-                    qr_expires_at,
-                    status
-                ]
-            );
+    await connection.query(
+        `
+        INSERT INTO attendance_sessions
+        (
+            subject_id,
+            staff_id,
+            allocation_id,
+            class_id,
+            academic_year,
+            session_date,
+            start_time,
+            end_time,
+            qr_token,
+            qr_expires_at,
+            status
+        )
+        VALUES
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+            subject_id,
+            loggedInStaffId,
+            allocation_id,
+            class_id,
+            academic_year,
+            session_date,
+            start_time,
+            end_time || null,
+            qr_token,
+            qr_expires_at,
+            status
+        ]
+    );
 
-        await connection.commit();
+console.log(
+    "Created Session ID:",
+    result.insertId
+);
 
+const [debugRows] =
+    await connection.query(
+        `
+        SELECT
+            session_id,
+            status,
+            start_time,
+            end_time
+        FROM attendance_sessions
+        WHERE session_id = ?
+        `,
+        [result.insertId]
+    );
+
+console.log(
+    "Inserted DB Row:",
+    debugRows[0]
+);
+
+await connection.commit();
         const [createdRows] =
             await db.query(
                 `
@@ -2039,23 +2062,18 @@ const getAttendanceSessionQR = async (
     let connection;
 
     try {
-        const sessionId =
-            Number(
-                req.params.id
-            );
+        console.log(
+            "DB HOST:",
+            process.env.DB_HOST
+        );
 
-        if (
-            !Number.isInteger(
-                sessionId
-            )
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Invalid session ID."
-            });
-        }
+        console.log(
+            "DB NAME:",
+            process.env.DB_NAME
+        );
 
+        connection =
+            await db.getConnection();
         const userRole =
             String(
                 req.user?.role || ""
@@ -2111,7 +2129,10 @@ const getAttendanceSessionQR = async (
                 query,
                 params
             );
-
+console.log(
+    "QR STATUS:",
+    rows[0]?.status
+);
         if (rows.length === 0) {
             return res.status(404).json({
                 success: false,
@@ -2135,7 +2156,10 @@ const getAttendanceSessionQR = async (
                     "Attendance session is not active."
             });
         }
-
+console.log(
+    "SESSION STATUS FROM DB:",
+    session.status
+);
         const qrResult =
             await getCurrentOrRotateSessionQR(
                 sessionId,

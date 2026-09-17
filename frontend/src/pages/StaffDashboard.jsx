@@ -99,6 +99,10 @@ const StaffDashboard = () => {
     const [attendanceRecords, setAttendanceRecords] =
         useState([]);
 
+    // Dashboard-only search/filter state
+    const [attendanceSearch, setAttendanceSearch] = useState("");
+    const [attendanceFilter, setAttendanceFilter] = useState("ALL");
+
     const [latestAttendance, setLatestAttendance] =
         useState(null);
 
@@ -843,7 +847,7 @@ const StaffDashboard = () => {
 
                     const response =
                         await fetch(
-                            `${API_BASE}/attendance-records/session/${id}`,
+                            `${API_BASE}/attendance/session/${id}`,
                             {
                                 method:
                                     "GET",
@@ -1152,36 +1156,43 @@ const StaffDashboard = () => {
                     }
 
                     const activeSession =
-                        data.session ??
-                        data.data ??
-                        data.active_session ??
-                        data.activeSession ??
-                        data;
+    data.session ??
+    data.data ??
+    data.active_session ??
+    data.activeSession ??
+    data;
 
-                    if (
-                        !activeSession ||
-                        !activeSession.session_id
-                    ) {
-                        setSessionId(
-                            null
-                        );
+const currentSessionId =
+    activeSession?.session_id ??
+    activeSession?.attendance_session_id ??
+    activeSession?.id;
 
-                        setSessionStatus(
-                            null
-                        );
+console.log(
+    "ACTIVE SESSION DATA:",
+    activeSession
+);
 
-                        setQrImage("");
+console.log(
+    "SESSION ID:",
+    currentSessionId
+);
 
-                        setQrExpiresAt(
-                            null
-                        );
+if (!currentSessionId) {
+    // Keep the final attendance summary visible after the
+    // backend removes the closed session from active sessions.
+    if (hasFinalStatistics) {
+        setSessionStatus("CLOSED");
+    } else {
+        setSessionId(null);
+        setSessionStatus(null);
+    }
 
-                        setSecondsLeft(
-                            0
-                        );
+    setQrImage("");
+    setQrExpiresAt(null);
+    setSecondsLeft(0);
 
-                        return;
-                    }
+    return;
+}
 
                     const activeAllocationId =
                         activeSession.allocation_id ??
@@ -1201,9 +1212,6 @@ const StaffDashboard = () => {
                         return;
                     }
 
-                    const currentSessionId =
-                        activeSession.session_id;
-
                     const currentStatus =
                         String(
                             activeSession.status ??
@@ -1219,8 +1227,8 @@ const StaffDashboard = () => {
                     );
 
                     if (
-                        currentStatus ===
-                        "ACTIVE"
+                        currentStatus === "ACTIVE" &&
+    currentSessionId
                     ) {
                         await Promise.all(
                             [
@@ -1262,6 +1270,7 @@ const StaffDashboard = () => {
                 selectedAllocationId,
                 loadQR,
                 loadLiveAttendance,
+                hasFinalStatistics,
             ]
         );
 
@@ -1343,24 +1352,38 @@ const StaffDashboard = () => {
                     );
 
                 const data =
-                    await response.json();
+    await response.json();
 
-                if (!response.ok) {
-                    throw new Error(
-                        data.message ||
-                            "Unable to start attendance session."
-                    );
-                }
+console.log(
+    "START ATTENDANCE RESPONSE:",
+    data
+);
 
-                const createdSession =
-                    data.session ??
-                    data.data ??
-                    data;
+if (!response.ok) {
+    throw new Error(
+        data.message ||
+        "Unable to start attendance session."
+    );
+}
 
-                const newSessionId =
-                    createdSession.session_id ??
-                    data.session_id;
+const createdSession =
+    data.session ??
+    data.data ??
+    data;
 
+console.log(
+    "CREATED SESSION:",
+    createdSession
+);
+
+const newSessionId =
+    createdSession.session_id ??
+    data.session_id;
+
+console.log(
+    "NEW SESSION ID:",
+    newSessionId
+);
                 if (!newSessionId) {
                     throw new Error(
                         "Session was created but session ID was not returned."
@@ -1515,6 +1538,49 @@ const StaffDashboard = () => {
                             "Unable to close attendance session."
                     );
                 }
+                // =========================================
+// KEEP FINAL DATA
+// =========================================
+
+setAttendanceRecords(
+    finalResult?.records || []
+);
+
+setAttendanceStats(
+    finalStatistics
+);
+
+setPresent(
+    finalStatistics.present || 0
+);
+
+setLate(
+    finalStatistics.late || 0
+);
+
+setAbsent(
+    finalStatistics.absent || 0
+);
+
+setTotal(
+    finalStatistics.total || 0
+);
+
+setPercentage(
+    finalStatistics.percentage || 0
+);
+
+setHasFinalStatistics(
+    true
+);
+
+setSessionStatus(
+    "CLOSED"
+);
+
+setMessage(
+    "Attendance session closed successfully."
+);
 
                 // =========================================
                 // PRESERVE FINAL STATISTICS
@@ -1661,7 +1727,11 @@ const StaffDashboard = () => {
                 qrTimerRef.current
             );
         }
-
+if (
+    sessionStatus !== "ACTIVE"
+) {
+    return;
+}
         loadQR(sessionId);
 
         qrTimerRef.current =
@@ -2008,127 +2078,121 @@ const StaffDashboard = () => {
         );
 
     // =====================================================
+    // DASHBOARD DISPLAY DATA
+    // =====================================================
+
+    const filteredAttendanceRecords = attendanceRecords.filter((record) => {
+        const search = attendanceSearch.trim().toLowerCase();
+        const name = String(getStudentName(record) || "").toLowerCase();
+        const register = String(getRegisterNumber(record) || "").toLowerCase();
+        const status = String(getAttendanceStatus(record) || "PRESENT").toUpperCase();
+
+        const matchesSearch =
+            !search || name.includes(search) || register.includes(search);
+        const matchesFilter =
+            attendanceFilter === "ALL" || status === attendanceFilter;
+
+        return matchesSearch && matchesFilter;
+    });
+
+    const chartMax = Math.max(present, late, absent, 1);
+
+    // =====================================================
     // UI
     // =====================================================
 
     return (
         <div
             style={{
-                minHeight:
-                    "100vh",
-                background:
-                    "#f5f7fb",
-                padding:
-                    "24px",
+                minHeight: "100vh",
+                background: "#f5f7fb",
+                padding: "24px",
             }}
         >
             <div
                 style={{
-                    maxWidth:
-                        "1400px",
-                    margin:
-                        "0 auto",
+                    maxWidth: "1400px",
+                    margin: "0 auto",
                 }}
             >
+
                 {/* =================================================
                     HEADER
                 ================================================= */}
 
                 <div
                     style={{
-                        display:
-                            "flex",
-                        justifyContent:
-                            "space-between",
-                        alignItems:
-                            "center",
-                        marginBottom:
-                            "24px",
-                        gap:
-                            "20px",
-                        flexWrap:
-                            "wrap",
+                        marginBottom: "24px",
                     }}
                 >
-                    <div>
-                        <h1
-                            style={{
-                                margin:
-                                    0,
-                                fontSize:
-                                    "30px",
-                                fontWeight:
-                                    700,
-                                color:
-                                    "#172033",
-                            }}
-                        >
-                            Staff Attendance
-                        </h1>
-
-                        <p
-                            style={{
-                                margin:
-                                    "6px 0 0",
-                                color:
-                                    "#667085",
-                            }}
-                        >
-                            Welcome{" "}
-                            {loggedUser?.name ||
-                                loggedUser?.full_name ||
-                                "Staff"}
-                        </p>
-                    </div>
-
-                    <button
-                        type="button"
-                        onClick={() => {
-                            clearMessages();
-                            loadSubjects();
-                            loadActiveSession();
-
-                            if (
-                                sessionId
-                            ) {
-                                loadLiveAttendance(
-                                    sessionId
-                                );
-                            }
-                        }}
-                        disabled={
-                            loadingSubjects ||
-                            loadingSession ||
-                            loadingAttendance
-                        }
+                    <h1
                         style={{
-                            border:
-                                "none",
-                            background:
-                                "#ffffff",
-                            color:
-                                "#344054",
-                            padding:
-                                "11px 16px",
-                            borderRadius:
-                                "10px",
-                            cursor:
-                                "pointer",
-                            display:
-                                "flex",
-                            alignItems:
-                                "center",
-                            gap:
-                                "8px",
-                            boxShadow:
-                                "0 2px 8px rgba(0,0,0,0.08)",
+                            margin: 0,
+                            fontSize: "30px",
+                            fontWeight: 700,
+                            color: "#172033",
                         }}
                     >
-                        <FaSyncAlt />
-                        Refresh
-                    </button>
-                </div>
+                        Staff Attendance
+                    </h1>
 
+                    <p
+                        style={{
+                            margin: "6px 0 0",
+                            color: "#667085",
+                        }}
+                    >
+                        Welcome{" "}
+                        {loggedUser?.name ||
+                            loggedUser?.full_name ||
+                            "Staff"}
+                    </p>
+                </div>
+<div
+    style={{
+        display: "grid",
+        gridTemplateColumns:
+            "repeat(4,1fr)",
+        gap: "12px",
+        marginBottom: "20px",
+    }}
+>
+    <button onClick={() => loadSubjects()}>
+        Refresh Subjects
+    </button>
+
+    <button
+        onClick={() =>
+            sessionId &&
+            loadLiveAttendance(
+                sessionId
+            )
+        }
+    >
+        Refresh Attendance
+    </button>
+
+    <button
+        onClick={() =>
+            window.scrollTo({
+                top: 0,
+                behavior: "smooth",
+            })
+        }
+    >
+        Top
+    </button>
+
+    <button
+        onClick={() =>
+            console.log(
+                attendanceRecords
+            )
+        }
+    >
+        Debug
+    </button>
+</div>
                 {/* =================================================
                     MESSAGES
                 ================================================= */}
@@ -2136,18 +2200,12 @@ const StaffDashboard = () => {
                 {message && (
                     <div
                         style={{
-                            background:
-                                "#ecfdf3",
-                            border:
-                                "1px solid #abefc6",
-                            color:
-                                "#067647",
-                            padding:
-                                "12px 16px",
-                            borderRadius:
-                                "10px",
-                            marginBottom:
-                                "16px",
+                            background: "#ecfdf3",
+                            border: "1px solid #abefc6",
+                            color: "#067647",
+                            padding: "12px 16px",
+                            borderRadius: "10px",
+                            marginBottom: "16px",
                         }}
                     >
                         {message}
@@ -2157,18 +2215,12 @@ const StaffDashboard = () => {
                 {error && (
                     <div
                         style={{
-                            background:
-                                "#fef3f2",
-                            border:
-                                "1px solid #fecdca",
-                            color:
-                                "#b42318",
-                            padding:
-                                "12px 16px",
-                            borderRadius:
-                                "10px",
-                            marginBottom:
-                                "16px",
+                            background: "#fef3f2",
+                            border: "1px solid #fecdca",
+                            color: "#b42318",
+                            padding: "12px 16px",
+                            borderRadius: "10px",
+                            marginBottom: "16px",
                         }}
                     >
                         {error}
@@ -2181,215 +2233,89 @@ const StaffDashboard = () => {
 
                 <div
                     style={{
-                        background:
-                            "#ffffff",
-                        borderRadius:
-                            "16px",
-                        padding:
-                            "20px",
-                        marginBottom:
-                            "20px",
-                        boxShadow:
-                            "0 4px 15px rgba(0,0,0,0.06)",
+                        background: "#ffffff",
+                        borderRadius: "16px",
+                        padding: "20px",
+                        marginBottom: "20px",
+                        boxShadow: "0 4px 15px rgba(0,0,0,0.06)",
                     }}
                 >
                     <div
                         style={{
-                            display:
-                                "flex",
-                            alignItems:
-                                "center",
-                            gap:
-                                "10px",
-                            marginBottom:
-                                "12px",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "10px",
+                            marginBottom: "12px",
                         }}
                     >
-                        <FaBook
-                            style={{
-                                color:
-                                    "#4f46e5",
-                            }}
-                        />
+                        <FaBook style={{ color: "#4f46e5" }} />
 
                         <h2
                             style={{
-                                margin:
-                                    0,
-                                fontSize:
-                                    "18px",
+                                margin: 0,
+                                fontSize: "18px",
                             }}
                         >
                             Select Subject / Class
                         </h2>
                     </div>
 
-                    <div
+                    <select
+                        value={selectedAllocationId}
+                        onChange={(e) => {
+                            clearMessages();
+                            setSelectedAllocationId(e.target.value);
+                            setHasFinalStatistics(false);
+                            setPresent(0);
+                            setLate(0);
+                            setAbsent(0);
+                            setTotal(0);
+                            setPercentage(0);
+                            setAttendanceRecords([]);
+                            setLatestAttendance(null);
+                            setLastAttendanceTime(null);
+                        }}
+                        disabled={
+                            loadingSubjects ||
+                            isSessionActive
+                        }
                         style={{
-                            display:
-                                "flex",
-                            gap:
-                                "12px",
-                            flexWrap:
-                                "wrap",
+                            width: "100%",
+                            padding: "12px 14px",
+                            border: "1px solid #d0d5dd",
+                            borderRadius: "10px",
+                            background: "#ffffff",
+                            fontSize: "15px",
                         }}
                     >
-                        <select
-                            value={
-                                selectedAllocationId
-                            }
-                            onChange={(e) => {
-                                clearMessages();
+                        <option value="">
+                            {loadingSubjects
+                                ? "Loading subjects..."
+                                : "Select subject/class"}
+                        </option>
 
-                                setSelectedAllocationId(
-                                    e.target.value
-                                );
-                            }}
-                            disabled={
-                                loadingSubjects ||
-                                isSessionActive
-                            }
-                            style={{
-                                flex:
-                                    1,
-                                minWidth:
-                                    "280px",
-                                padding:
-                                    "12px 14px",
-                                border:
-                                    "1px solid #d0d5dd",
-                                borderRadius:
-                                    "10px",
-                                background:
-                                    "#ffffff",
-                                fontSize:
-                                    "15px",
-                            }}
-                        >
-                            <option value="">
-                                {loadingSubjects
-                                    ? "Loading subjects..."
-                                    : "Select subject/class"}
+                        {subjects.map((item) => (
+                            <option
+                                key={item.allocation_id}
+                                value={item.allocation_id}
+                            >
+                                {item.subject_name ||
+                                    item.subject_code ||
+                                    `Subject ${item.subject_id}`}
+                                {" - "}
+                                {item.class_year ||
+                                    item.year ||
+                                    ""}
+                                {" "}
+                                {item.class_section ||
+                                    item.section ||
+                                    ""}
+                                {item.semester
+                                    ? ` - Sem ${item.semester}`
+                                    : ""}
                             </option>
-
-                            {subjects.map(
-                                (
-                                    item
-                                ) => (
-                                    <option
-                                        key={
-                                            item.allocation_id
-                                        }
-                                        value={
-                                            item.allocation_id
-                                        }
-                                    >
-                                        {item.subject_name ||
-                                            item.subject_code ||
-                                            `Subject ${item.subject_id}`}
-                                        {" - "}
-                                        {item.class_year ||
-                                            item.year ||
-                                            ""}
-                                        {" "}
-                                        {item.class_section ||
-                                            item.section ||
-                                            ""}
-                                        {item.semester
-                                            ? ` - Sem ${item.semester}`
-                                            : ""}
-                                    </option>
-                                )
-                            )}
-                        </select>
-
-                        {!isSessionActive ? (
-                            <button
-                                type="button"
-                                onClick={
-                                    startAttendance
-                                }
-                                disabled={
-                                    loadingSession ||
-                                    !selectedAllocationId
-                                }
-                                style={{
-                                    border:
-                                        "none",
-                                    background:
-                                        "#16a34a",
-                                    color:
-                                        "#ffffff",
-                                    padding:
-                                        "12px 20px",
-                                    borderRadius:
-                                        "10px",
-                                    cursor:
-                                        "pointer",
-                                    display:
-                                        "flex",
-                                    alignItems:
-                                        "center",
-                                    justifyContent:
-                                        "center",
-                                    gap:
-                                        "8px",
-                                    fontWeight:
-                                        600,
-                                    minWidth:
-                                        "180px",
-                                }}
-                            >
-                                <FaPlay />
-
-                                {loadingSession
-                                    ? "Starting..."
-                                    : "Start Attendance"}
-                            </button>
-                        ) : (
-                            <button
-                                type="button"
-                                onClick={
-                                    closeAttendance
-                                }
-                                disabled={
-                                    loadingSession
-                                }
-                                style={{
-                                    border:
-                                        "none",
-                                    background:
-                                        "#dc2626",
-                                    color:
-                                        "#ffffff",
-                                    padding:
-                                        "12px 20px",
-                                    borderRadius:
-                                        "10px",
-                                    cursor:
-                                        "pointer",
-                                    display:
-                                        "flex",
-                                    alignItems:
-                                        "center",
-                                    justifyContent:
-                                        "center",
-                                    gap:
-                                        "8px",
-                                    fontWeight:
-                                        600,
-                                    minWidth:
-                                        "180px",
-                                }}
-                            >
-                                <FaStop />
-
-                                {loadingSession
-                                    ? "Closing..."
-                                    : "Close Attendance"}
-                            </button>
-                        )}
-                    </div>
+                        ))}
+                    </select>
                 </div>
 
                 {/* =================================================
@@ -2399,44 +2325,29 @@ const StaffDashboard = () => {
                 {selectedSubject && (
                     <div
                         style={{
-                            background:
-                                "#ffffff",
-                            borderRadius:
-                                "16px",
-                            padding:
-                                "18px 20px",
-                            marginBottom:
-                                "20px",
-                            boxShadow:
-                                "0 4px 15px rgba(0,0,0,0.06)",
+                            background: "#ffffff",
+                            borderRadius: "16px",
+                            padding: "18px 20px",
+                            marginBottom: "20px",
+                            boxShadow: "0 4px 15px rgba(0,0,0,0.06)",
                         }}
                     >
                         <div
                             style={{
-                                display:
-                                    "grid",
+                                display: "grid",
                                 gridTemplateColumns:
                                     "repeat(auto-fit, minmax(180px, 1fr))",
-                                gap:
-                                    "15px",
+                                gap: "15px",
                             }}
                         >
                             <div>
-                                <small
-                                    style={{
-                                        color:
-                                            "#667085",
-                                    }}
-                                >
+                                <small style={{ color: "#667085" }}>
                                     Subject
                                 </small>
-
                                 <div
                                     style={{
-                                        fontWeight:
-                                            600,
-                                        marginTop:
-                                            "4px",
+                                        fontWeight: 600,
+                                        marginTop: "4px",
                                     }}
                                 >
                                     {selectedSubject.subject_name ||
@@ -2446,21 +2357,13 @@ const StaffDashboard = () => {
                             </div>
 
                             <div>
-                                <small
-                                    style={{
-                                        color:
-                                            "#667085",
-                                    }}
-                                >
+                                <small style={{ color: "#667085" }}>
                                     Class
                                 </small>
-
                                 <div
                                     style={{
-                                        fontWeight:
-                                            600,
-                                        marginTop:
-                                            "4px",
+                                        fontWeight: 600,
+                                        marginTop: "4px",
                                     }}
                                 >
                                     {selectedSubject.class_year ||
@@ -2473,79 +2376,50 @@ const StaffDashboard = () => {
                             </div>
 
                             <div>
-                                <small
-                                    style={{
-                                        color:
-                                            "#667085",
-                                    }}
-                                >
+                                <small style={{ color: "#667085" }}>
                                     Academic Year
                                 </small>
-
                                 <div
                                     style={{
-                                        fontWeight:
-                                            600,
-                                        marginTop:
-                                            "4px",
+                                        fontWeight: 600,
+                                        marginTop: "4px",
                                     }}
                                 >
-                                    {selectedSubject.academic_year ||
-                                        "-"}
+                                    {selectedSubject.academic_year || "-"}
                                 </div>
                             </div>
 
                             <div>
-                                <small
-                                    style={{
-                                        color:
-                                            "#667085",
-                                    }}
-                                >
+                                <small style={{ color: "#667085" }}>
                                     Semester
                                 </small>
-
                                 <div
                                     style={{
-                                        fontWeight:
-                                            600,
-                                        marginTop:
-                                            "4px",
+                                        fontWeight: 600,
+                                        marginTop: "4px",
                                     }}
                                 >
-                                    {selectedSubject.semester ||
-                                        "-"}
+                                    {selectedSubject.semester || "-"}
                                 </div>
                             </div>
 
                             <div>
-                                <small
-                                    style={{
-                                        color:
-                                            "#667085",
-                                    }}
-                                >
+                                <small style={{ color: "#667085" }}>
                                     Session Status
                                 </small>
-
                                 <div
                                     style={{
-                                        fontWeight:
-                                            700,
-                                        marginTop:
-                                            "4px",
+                                        fontWeight: 700,
+                                        marginTop: "4px",
                                         color:
-                                            sessionStatus ===
-                                            "ACTIVE"
+                                            sessionStatus === "ACTIVE"
                                                 ? "#16a34a"
-                                                : sessionStatus ===
-                                                  "CLOSED"
+                                                : sessionStatus === "CLOSED"
                                                 ? "#dc2626"
                                                 : "#667085",
                                     }}
                                 >
-                                    {sessionStatus ||
-                                        "NOT STARTED"}
+                                    {sessionStatus || "NOT STARTED"}
                                 </div>
                             </div>
                         </div>
@@ -2558,1617 +2432,897 @@ const StaffDashboard = () => {
 
                 <div
                     style={{
-                        display:
-                            "grid",
+                        display: "grid",
                         gridTemplateColumns:
                             "repeat(auto-fit, minmax(180px, 1fr))",
-                        gap:
-                            "16px",
-                        marginBottom:
-                            "20px",
+                        gap: "16px",
+                        marginBottom: "20px",
                     }}
                 >
-                    {/* TOTAL */}
-
-                    <div
-                        style={{
-                            background:
-                                "#ffffff",
-                            borderRadius:
-                                "16px",
-                            padding:
-                                "20px",
-                            boxShadow:
-                                "0 4px 15px rgba(0,0,0,0.06)",
-                        }}
-                    >
+                    {[
+                        {
+                            label: "Total Students",
+                            value: total,
+                            icon: <FaUsers size={28} />,
+                            iconColor: "#4f46e5",
+                            sub: "Enrolled students",
+                        },
+                        {
+                            label: "Present",
+                            value: present,
+                            icon: <FaCheckCircle size={28} />,
+                            iconColor: "#16a34a",
+                            sub:
+                                total > 0
+                                    ? `${Math.round(
+                                          (present / total) * 100
+                                      )}% of class`
+                                    : "0% of class",
+                        },
+                        {
+                            label: "Late",
+                            value: late,
+                            icon: <FaClock size={28} />,
+                            iconColor: "#d97706",
+                            sub:
+                                total > 0
+                                    ? `${Math.round(
+                                          (late / total) * 100
+                                      )}% of class`
+                                    : "0% of class",
+                        },
+                        {
+                            label: "Absent",
+                            value: absent,
+                            icon: <FaUserTimes size={28} />,
+                            iconColor: "#dc2626",
+                            sub:
+                                total > 0
+                                    ? `${Math.round(
+                                          (absent / total) * 100
+                                      )}% of class`
+                                    : "0% of class",
+                        },
+                        {
+                            label: "Attendance %",
+                            value: `${percentage}%`,
+                            icon: <FaPercentage size={28} />,
+                            iconColor: "#7c3aed",
+                            sub: "Today's attendance",
+                        },
+                    ].map((card) => (
                         <div
+                            key={card.label}
                             style={{
-                                display:
-                                    "flex",
-                                justifyContent:
-                                    "space-between",
-                                alignItems:
-                                    "center",
+                                background: "#ffffff",
+                                borderRadius: "16px",
+                                padding: "20px",
+                                boxShadow:
+                                    "0 4px 15px rgba(0,0,0,0.06)",
                             }}
                         >
-                            <div>
-                                <div
-                                    style={{
-                                        color:
-                                            "#667085",
-                                        fontSize:
-                                            "14px",
-                                    }}
-                                >
-                                    Total Students
-                                </div>
-
-                                <div
-                                    style={{
-                                        fontSize:
-                                            "28px",
-                                        fontWeight:
-                                            700,
-                                        marginTop:
-                                            "6px",
-                                    }}
-                                >
-                                    {total}
-                                </div>
-                            </div>
-
-                            <FaUsers
-                                size={28}
+                            <div
                                 style={{
-                                    color:
-                                        "#4f46e5",
+                                    display: "flex",
+                                    justifyContent: "space-between",
+                                    alignItems: "center",
                                 }}
-                            />
-                        </div>
-                    </div>
+                            >
+                                <div>
+                                    <div
+                                        style={{
+                                            color: "#667085",
+                                            fontSize: "14px",
+                                        }}
+                                    >
+                                        {card.label}
+                                    </div>
 
-                    {/* PRESENT */}
+                                    <div
+                                        style={{
+                                            fontSize: "28px",
+                                            fontWeight: 700,
+                                            marginTop: "6px",
+                                            color:
+                                                card.label === "Present"
+                                                    ? "#16a34a"
+                                                    : card.label === "Late"
+                                                    ? "#d97706"
+                                                    : card.label === "Absent"
+                                                    ? "#dc2626"
+                                                    : "#172033",
+                                        }}
+                                    >
+                                        {card.value}
+                                    </div>
 
-                    <div
-                        style={{
-                            background:
-                                "#ffffff",
-                            borderRadius:
-                                "16px",
-                            padding:
-                                "20px",
-                            boxShadow:
-                                "0 4px 15px rgba(0,0,0,0.06)",
-                        }}
-                    >
-                        <div
-                            style={{
-                                display:
-                                    "flex",
-                                justifyContent:
-                                    "space-between",
-                                alignItems:
-                                    "center",
-                            }}
-                        >
-                            <div>
-                                <div
-                                    style={{
-                                        color:
-                                            "#667085",
-                                        fontSize:
-                                            "14px",
-                                    }}
-                                >
-                                    Present
+                                    <div
+                                        style={{
+                                            marginTop: "4px",
+                                            fontSize: "12px",
+                                            color: "#98a2b3",
+                                        }}
+                                    >
+                                        {card.sub}
+                                    </div>
                                 </div>
 
-                                <div
-                                    style={{
-                                        fontSize:
-                                            "28px",
-                                        fontWeight:
-                                            700,
-                                        marginTop:
-                                            "6px",
-                                        color:
-                                            "#16a34a",
-                                    }}
-                                >
-                                    {present}
-                                </div>
+                                <span style={{ color: card.iconColor }}>
+                                    {card.icon}
+                                </span>
                             </div>
-
-                            <FaCheckCircle
-                                size={28}
-                                style={{
-                                    color:
-                                        "#16a34a",
-                                }}
-                            />
                         </div>
-                    </div>
-
-                    {/* LATE */}
-
-                    <div
-                        style={{
-                            background:
-                                "#ffffff",
-                            borderRadius:
-                                "16px",
-                            padding:
-                                "20px",
-                            boxShadow:
-                                "0 4px 15px rgba(0,0,0,0.06)",
-                        }}
-                    >
-                        <div
-                            style={{
-                                display:
-                                    "flex",
-                                justifyContent:
-                                    "space-between",
-                                alignItems:
-                                    "center",
-                            }}
-                        >
-                            <div>
-                                <div
-                                    style={{
-                                        color:
-                                            "#667085",
-                                        fontSize:
-                                            "14px",
-                                    }}
-                                >
-                                    Late
-                                </div>
-
-                                <div
-                                    style={{
-                                        fontSize:
-                                            "28px",
-                                        fontWeight:
-                                            700,
-                                        marginTop:
-                                            "6px",
-                                        color:
-                                            "#d97706",
-                                    }}
-                                >
-                                    {late}
-                                </div>
-                            </div>
-
-                            <FaClock
-                                size={28}
-                                style={{
-                                    color:
-                                        "#d97706",
-                                }}
-                            />
-                        </div>
-                    </div>
-
-                    {/* ABSENT */}
-
-                    <div
-                        style={{
-                            background:
-                                "#ffffff",
-                            borderRadius:
-                                "16px",
-                            padding:
-                                "20px",
-                            boxShadow:
-                                "0 4px 15px rgba(0,0,0,0.06)",
-                        }}
-                    >
-                        <div
-                            style={{
-                                display:
-                                    "flex",
-                                justifyContent:
-                                    "space-between",
-                                alignItems:
-                                    "center",
-                            }}
-                        >
-                            <div>
-                                <div
-                                    style={{
-                                        color:
-                                            "#667085",
-                                        fontSize:
-                                            "14px",
-                                    }}
-                                >
-                                    Absent
-                                </div>
-
-                                <div
-                                    style={{
-                                        fontSize:
-                                            "28px",
-                                        fontWeight:
-                                            700,
-                                        marginTop:
-                                            "6px",
-                                        color:
-                                            "#dc2626",
-                                    }}
-                                >
-                                    {absent}
-                                </div>
-                            </div>
-
-                            <FaUserTimes
-                                size={28}
-                                style={{
-                                    color:
-                                        "#dc2626",
-                                }}
-                            />
-                        </div>
-                    </div>
-
-                    {/* PERCENTAGE */}
-
-                    <div
-                        style={{
-                            background:
-                                "#ffffff",
-                            borderRadius:
-                                "16px",
-                            padding:
-                                "20px",
-                            boxShadow:
-                                "0 4px 15px rgba(0,0,0,0.06)",
-                        }}
-                    >
-                        <div
-                            style={{
-                                display:
-                                    "flex",
-                                justifyContent:
-                                    "space-between",
-                                alignItems:
-                                    "center",
-                            }}
-                        >
-                            <div>
-                                <div
-                                    style={{
-                                        color:
-                                            "#667085",
-                                        fontSize:
-                                            "14px",
-                                    }}
-                                >
-                                    Attendance %
-                                </div>
-
-                                <div
-                                    style={{
-                                        fontSize:
-                                            "28px",
-                                        fontWeight:
-                                            700,
-                                        marginTop:
-                                            "6px",
-                                    }}
-                                >
-                                    {percentage}%
-                                </div>
-                            </div>
-
-                            <FaPercentage
-                                size={28}
-                                style={{
-                                    color:
-                                        "#7c3aed",
-                                }}
-                            />
-                        </div>
-                    </div>
+                    ))}
                 </div>
+<div
+    style={{
+        background: "#ffffff",
+        borderRadius: "16px",
+        padding: "20px",
+        marginBottom: "20px",
+        boxShadow: "0 4px 15px rgba(0,0,0,0.06)",
+    }}
+>
+    <h3 style={{ marginBottom: "15px" }}>
+        Live Session Monitor
+    </h3>
+
+    <div
+        style={{
+            display: "grid",
+            gridTemplateColumns:
+                "repeat(auto-fit,minmax(180px,1fr))",
+            gap: "15px",
+        }}
+    >
+        <div>
+            <small>Session ID</small>
+            <div style={{ fontWeight: 700 }}>
+                {sessionId || "-"}
+            </div>
+        </div>
+
+        <div>
+            <small>Students Scanned</small>
+            <div
+                style={{
+                    fontWeight: 700,
+                    color: "#16a34a",
+                }}
+            >
+                {present + late}
+            </div>
+        </div>
+
+        <div>
+            <small>Pending Students</small>
+            <div
+                style={{
+                    fontWeight: 700,
+                    color: "#dc2626",
+                }}
+            >
+                {Math.max(
+                    total - (present + late),
+                    0
+                )}
+            </div>
+        </div>
+
+        <div>
+            <small>QR Expires In</small>
+            <div
+                style={{
+                    fontWeight: 700,
+                    color: "#4f46e5",
+                }}
+            >
+                {secondsLeft}s
+            </div>
+        </div>
+    </div>
+</div>
+<div
+    style={{
+        background: "#ecfdf3",
+        border: "1px solid #abefc6",
+        borderRadius: "16px",
+        padding: "16px",
+        marginBottom: "20px",
+    }}
+>
+    <strong>
+        Class Attendance Insight
+    </strong>
+
+    <p
+        style={{
+            marginTop: "8px",
+            marginBottom: 0,
+        }}
+    >
+        {percentage >= 90
+            ? "Excellent attendance today."
+            : percentage >= 75
+            ? "Good attendance. Few students absent."
+            : "Attendance is below expected level."}
+    </p>
+</div>
+                {/* =================================================
+                    FINAL SESSION SUMMARY
+                ================================================= */}
+
+                {hasFinalStatistics && sessionStatus === "CLOSED" && (
+                    <div
+                        style={{
+                            background: "#ffffff",
+                            borderRadius: "16px",
+                            padding: "20px",
+                            marginBottom: "20px",
+                            boxShadow: "0 4px 15px rgba(0,0,0,0.06)",
+                            border: "1px solid #e4e7ec",
+                        }}
+                    >
+                        <div
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                gap: "12px",
+                                marginBottom: "18px",
+                                flexWrap: "wrap",
+                            }}
+                        >
+                            <div>
+                                <h3 style={{ margin: 0, color: "#172033" }}>
+                                    Final Attendance Summary
+                                </h3>
+                                <p
+                                    style={{
+                                        margin: "5px 0 0",
+                                        color: "#98a2b3",
+                                        fontSize: "13px",
+                                    }}
+                                >
+                                    Final details recorded when the attendance session was closed
+                                </p>
+                            </div>
+                            <span
+                                style={{
+                                    padding: "6px 12px",
+                                    borderRadius: "999px",
+                                    background: "#ecfdf3",
+                                    color: "#067647",
+                                    fontSize: "12px",
+                                    fontWeight: 700,
+                                }}
+                            >
+                                SESSION CLOSED
+                            </span>
+                        </div>
+
+                        <div
+                            style={{
+                                display: "grid",
+                                gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+                                gap: "12px",
+                            }}
+                        >
+                            {[
+                                { label: "Total Students", value: total },
+                                { label: "Present", value: present },
+                                { label: "Late", value: late },
+                                { label: "Absent", value: absent },
+                                { label: "Attendance Rate", value: `${percentage}%` },
+                            ].map((item) => (
+                                <div
+                                    key={item.label}
+                                    style={{
+                                        padding: "14px",
+                                        borderRadius: "12px",
+                                        background: "#f8fafc",
+                                        border: "1px solid #eaecf0",
+                                    }}
+                                >
+                                    <div
+                                        style={{
+                                            color: "#667085",
+                                            fontSize: "12px",
+                                            marginBottom: "6px",
+                                        }}
+                                    >
+                                        {item.label}
+                                    </div>
+                                    <div
+                                        style={{
+                                            fontSize: "22px",
+                                            fontWeight: 700,
+                                            color: "#172033",
+                                        }}
+                                    >
+                                        {item.value}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 {/* =================================================
-                    MAIN CONTENT
+                    DASHBOARD OVERVIEW
                 ================================================= */}
 
                 <div
                     style={{
-                        display:
-                            "grid",
+                        display: "grid",
                         gridTemplateColumns:
-                            "minmax(320px, 1fr) minmax(320px, 1fr)",
-                        gap:
-                            "20px",
+                            "minmax(0, 1.35fr) minmax(300px, 1fr)",
+                        gap: "20px",
+                        marginBottom: "20px",
                     }}
                 >
-                    {/* =================================================
-                        QR SECTION
-                    ================================================= */}
+                    {/* ATTENDANCE CHART */}
 
                     <div
                         style={{
-                            background:
-                                "#ffffff",
-                            borderRadius:
-                                "16px",
-                            padding:
-                                "24px",
-                            boxShadow:
-                                "0 4px 15px rgba(0,0,0,0.06)",
-                            textAlign:
-                                "center",
+                            background: "#ffffff",
+                            borderRadius: "16px",
+                            padding: "20px",
+                            boxShadow: "0 4px 15px rgba(0,0,0,0.06)",
                         }}
                     >
                         <div
                             style={{
-                                display:
-                                    "flex",
-                                justifyContent:
-                                    "center",
-                                alignItems:
-                                    "center",
-                                gap:
-                                    "10px",
-                                marginBottom:
-                                    "8px",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "10px",
+                                marginBottom: "20px",
                             }}
                         >
-                            <FaQrcode
-                                size={22}
-                                style={{
-                                    color:
-                                        "#4f46e5",
-                                }}
-                            />
-
-                            <h2
-                                style={{
-                                    margin:
-                                        0,
-                                    fontSize:
-                                        "21px",
-                                }}
-                            >
-                                Attendance QR
-                            </h2>
-                        </div>
-
-                        <p
-                            style={{
-                                margin:
-                                    "0 0 18px",
-                                color:
-                                    "#667085",
-                            }}
-                        >
-                            Scan this QR from the
-                            student application.
-                        </p>
-
-                        {isSessionActive ? (
-                            <>
-                                {loadingQR &&
-                                !qrImage ? (
-                                    <div
-                                        style={{
-                                            padding:
-                                                "70px 20px",
-                                            color:
-                                                "#667085",
-                                        }}
-                                    >
-                                        Loading QR...
-                                    </div>
-                                ) : qrImage ? (
-                                    <>
-                                        <div
-                                            style={{
-                                                display:
-                                                    "inline-flex",
-                                                padding:
-                                                    "16px",
-                                                background:
-                                                    "#ffffff",
-                                                border:
-                                                    "1px solid #e4e7ec",
-                                                borderRadius:
-                                                    "16px",
-                                            }}
-                                        >
-                                            <img
-                                                src={
-                                                    qrImage
-                                                }
-                                                alt="Attendance QR Code"
-                                                style={{
-                                                    width:
-                                                        "280px",
-                                                    height:
-                                                        "280px",
-                                                    objectFit:
-                                                        "contain",
-                                                    display:
-                                                        "block",
-                                                }}
-                                            />
-                                        </div>
-
-                                        <div
-                                            style={{
-                                                marginTop:
-                                                    "18px",
-                                                display:
-                                                    "flex",
-                                                justifyContent:
-                                                    "center",
-                                                alignItems:
-                                                    "center",
-                                                gap:
-                                                    "10px",
-                                            }}
-                                        >
-                                            <FaClock />
-
-                                            <span
-                                                style={{
-                                                    fontSize:
-                                                        "18px",
-                                                    fontWeight:
-                                                        700,
-                                                    color:
-                                                        secondsLeft <=
-                                                        5
-                                                            ? "#dc2626"
-                                                            : "#344054",
-                                                }}
-                                            >
-                                                QR changes in{" "}
-                                                {
-                                                    secondsLeft
-                                                }{" "}
-                                                sec
-                                            </span>
-                                        </div>
-
-                                        <div
-                                            style={{
-                                                marginTop:
-                                                    "10px",
-                                                color:
-                                                    "#667085",
-                                                fontSize:
-                                                    "13px",
-                                            }}
-                                        >
-                                            QR automatically
-                                            refreshes every
-                                            second.
-                                        </div>
-
-                                        <div
-                                            style={{
-                                                marginTop:
-                                                    "5px",
-                                                color:
-                                                    "#667085",
-                                                fontSize:
-                                                    "13px",
-                                            }}
-                                        >
-                                            A successful
-                                            student scan
-                                            immediately
-                                            invalidates the
-                                            current QR.
-                                        </div>
-                                    </>
-                                ) : (
-                                    <div
-                                        style={{
-                                            padding:
-                                                "70px 20px",
-                                            color:
-                                                "#b42318",
-                                        }}
-                                    >
-                                        QR code is not
-                                        available.
-                                    </div>
-                                )}
-                            </>
-                        ) : sessionStatus ===
-                          "CLOSED" ? (
-                            <div
-                                style={{
-                                    padding:
-                                        "80px 20px",
-                                }}
-                            >
-                                <FaClipboardCheck
-                                    size={60}
-                                    style={{
-                                        color:
-                                            "#16a34a",
-                                        marginBottom:
-                                            "15px",
-                                    }}
-                                />
-
-                                <h3
-                                    style={{
-                                        margin:
-                                            "0 0 8px",
-                                    }}
-                                >
-                                    Attendance Closed
+                            <FaChartBar style={{ color: "#4f46e5" }} />
+                            <div>
+                                <h3 style={{ margin: 0, color: "#172033" }}>
+                                    Attendance Chart
                                 </h3>
-
-                                <p
-                                    style={{
-                                        color:
-                                            "#667085",
-                                        margin:
-                                            0,
-                                    }}
-                                >
-                                    The attendance
-                                    session has been
-                                    completed.
+                                <p style={{ margin: "5px 0 0", color: "#98a2b3", fontSize: "13px" }}>
+                                    Current class attendance distribution
                                 </p>
                             </div>
+                        </div>
+
+                        <div
+                            style={{
+                                height: "180px",
+                                display: "flex",
+                                alignItems: "flex-end",
+                                justifyContent: "space-around",
+                                gap: "18px",
+                                padding: "10px 8px 0",
+                                borderBottom: "1px solid #eaecf0",
+                            }}
+                        >
+                            {[
+                                { label: "Present", value: present, color: "#16a34a" },
+                                { label: "Late", value: late, color: "#d97706" },
+                                { label: "Absent", value: absent, color: "#dc2626" },
+                            ].map((item) => (
+                                <div
+                                    key={item.label}
+                                    style={{
+                                        flex: 1,
+                                        maxWidth: "90px",
+                                        height: "100%",
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        justifyContent: "flex-end",
+                                        alignItems: "center",
+                                    }}
+                                >
+                                    <strong style={{ marginBottom: "6px", color: "#172033" }}>
+                                        {item.value}
+                                    </strong>
+                                    <div
+                                        style={{
+                                            width: "52px",
+                                            height: `${Math.max((item.value / chartMax) * 125, item.value > 0 ? 8 : 2)}px`,
+                                            background: item.color,
+                                            borderRadius: "8px 8px 2px 2px",
+                                            transition: "height 0.3s ease",
+                                        }}
+                                    />
+                                    <span style={{ marginTop: "8px", fontSize: "12px", color: "#667085", fontWeight: 600 }}>
+                                        {item.label}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* LIVE SESSION STATUS */}
+
+<div
+    style={{
+        background: "#ffffff",
+        borderRadius: "16px",
+        padding: "20px",
+        boxShadow:
+            "0 4px 15px rgba(0,0,0,0.06)",
+    }}
+>
+    <div
+        style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: "18px",
+        }}
+    >
+        <div>
+            <h3
+                style={{
+                    margin: 0,
+                    color: "#172033",
+                }}
+            >
+                Live Session Status
+            </h3>
+
+            <p
+                style={{
+                    margin: "5px 0 0",
+                    color: "#98a2b3",
+                    fontSize: "13px",
+                }}
+            >
+                Real-time attendance monitoring
+            </p>
+        </div>
+
+        <div
+            style={{
+                width: "12px",
+                height: "12px",
+                borderRadius: "50%",
+                background:
+                    isSessionActive
+                        ? "#16a34a"
+                        : "#dc2626",
+            }}
+        />
+    </div>
+
+    <div
+        style={{
+            display: "grid",
+            gap: "14px",
+        }}
+    >
+        <div
+            style={{
+                padding: "14px",
+                borderRadius: "12px",
+                background: "#f8fafc",
+            }}
+        >
+            <div
+                style={{
+                    fontSize: "12px",
+                    color: "#667085",
+                }}
+            >
+                Session Status
+            </div>
+
+            <div
+                style={{
+                    fontSize: "22px",
+                    fontWeight: 700,
+                    marginTop: "4px",
+                    color:
+                        isSessionActive
+                            ? "#16a34a"
+                            : "#dc2626",
+                }}
+            >
+                {sessionStatus || "NOT STARTED"}
+            </div>
+        </div>
+
+        <div
+            style={{
+                padding: "14px",
+                borderRadius: "12px",
+                background: "#f8fafc",
+            }}
+        >
+            <div
+                style={{
+                    fontSize: "12px",
+                    color: "#667085",
+                }}
+            >
+                QR Countdown
+            </div>
+
+            <div
+                style={{
+                    fontSize: "22px",
+                    fontWeight: 700,
+                    color: "#4f46e5",
+                    marginTop: "4px",
+                }}
+            >
+                {isSessionActive
+                    ? `${secondsLeft}s`
+                    : "--"}
+            </div>
+        </div>
+
+        <div
+            style={{
+                padding: "14px",
+                borderRadius: "12px",
+                background: "#f8fafc",
+            }}
+        >
+            <div
+                style={{
+                    fontSize: "12px",
+                    color: "#667085",
+                }}
+            >
+                Records Captured
+            </div>
+
+            <div
+                style={{
+                    fontSize: "22px",
+                    fontWeight: 700,
+                    color: "#172033",
+                    marginTop: "4px",
+                }}
+            >
+                {attendanceRecords.length}
+            </div>
+        </div>
+
+        <div
+            style={{
+                padding: "14px",
+                borderRadius: "12px",
+                background: "#f8fafc",
+            }}
+        >
+            <div
+                style={{
+                    fontSize: "12px",
+                    color: "#667085",
+                }}
+            >
+                Last Scan
+            </div>
+
+            <div
+                style={{
+                    fontSize: "14px",
+                    fontWeight: 600,
+                    color: "#172033",
+                    marginTop: "4px",
+                }}
+            >
+                {lastAttendanceTime
+                    ? formatDateTime(
+                          lastAttendanceTime
+                      )
+                    : "No scans yet"}
+            </div>
+        </div>
+    </div>
+</div>
+                    {/* RECENT ATTENDANCE - FULL WIDTH */}
+
+                    <div
+                        style={{
+                            gridColumn: "1 / -1",
+                            background: "#ffffff",
+                            borderRadius: "16px",
+                            padding: "20px",
+                            boxShadow:
+                                "0 4px 15px rgba(0,0,0,0.06)",
+                        }}
+                    >
+                        <div
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "10px",
+                                marginBottom: "18px",
+                            }}
+                        >
+                            <FaHistory
+                                style={{ color: "#4f46e5" }}
+                            />
+
+                            <div>
+                                <h3
+                                    style={{
+                                        margin: 0,
+                                        color: "#172033",
+                                    }}
+                                >
+                                    Recent Attendance
+                                </h3>
+                                <p
+                                    style={{
+                                        margin: "5px 0 0",
+                                        color: "#98a2b3",
+                                        fontSize: "13px",
+                                    }}
+                                >
+                                    Latest student scans
+                                </p>
+                            </div>
+                        </div>
+
+                        <div
+                            style={{
+                                display: "grid",
+                                gridTemplateColumns: "minmax(0, 1fr) 130px",
+                                gap: "10px",
+                                marginBottom: "14px",
+                            }}
+                        >
+                            <input
+                                type="text"
+                                value={attendanceSearch}
+                                onChange={(e) => setAttendanceSearch(e.target.value)}
+                                placeholder="Search name or register number..."
+                                style={{
+                                    width: "100%",
+                                    boxSizing: "border-box",
+                                    padding: "10px 12px",
+                                    border: "1px solid #d0d5dd",
+                                    borderRadius: "10px",
+                                    outline: "none",
+                                    fontSize: "13px",
+                                }}
+                            />
+                            <select
+                                value={attendanceFilter}
+                                onChange={(e) => setAttendanceFilter(e.target.value)}
+                                style={{
+                                    width: "100%",
+                                    padding: "10px 8px",
+                                    border: "1px solid #d0d5dd",
+                                    borderRadius: "10px",
+                                    background: "#ffffff",
+                                    fontSize: "13px",
+                                }}
+                            >
+                                <option value="ALL">All Status</option>
+                                <option value="PRESENT">Present</option>
+                                <option value="LATE">Late</option>
+                                <option value="ABSENT">Absent</option>
+                            </select>
+                        </div>
+
+                        {filteredAttendanceRecords.length > 0 ? (
+                            filteredAttendanceRecords
+                                .slice(0, 8)
+                                .map((record, index) => {
+                                    const status =
+                                        getAttendanceStatus(record);
+
+                                    return (
+                                        <div
+                                            key={
+                                                getAttendanceId(
+                                                    record
+                                                ) ??
+                                                `${index}-${getRegisterNumber(
+                                                    record
+                                                )}`
+                                            }
+                                            style={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                justifyContent:
+                                                    "space-between",
+                                                padding: "10px 0",
+                                                borderBottom:
+                                                    index <
+                                                    Math.min(
+                                                        filteredAttendanceRecords.length,
+                                                        8
+                                                    ) -
+                                                        1
+                                                        ? "1px solid #f2f4f7"
+                                                        : "none",
+                                            }}
+                                        >
+                                            <div
+                                                style={{
+                                                    minWidth: 0,
+                                                }}
+                                            >
+                                                <div
+                                                    style={{
+                                                        fontWeight: 600,
+                                                        color: "#172033",
+                                                        fontSize: "14px",
+                                                        whiteSpace:
+                                                            "nowrap",
+                                                        overflow:
+                                                            "hidden",
+                                                        textOverflow:
+                                                            "ellipsis",
+                                                    }}
+                                                >
+                                                    {getStudentName(
+                                                        record
+                                                    )}
+                                                </div>
+
+                                                <div
+                                                    style={{
+                                                        marginTop: "3px",
+                                                        color: "#98a2b3",
+                                                        fontSize: "11px",
+                                                    }}
+                                                >
+                                                    {getRegisterNumber(
+                                                        record
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <div
+                                                style={{
+                                                    textAlign: "right",
+                                                    marginLeft: "10px",
+                                                }}
+                                            >
+                                                <span
+                                                    style={{
+                                                        display:
+                                                            "inline-block",
+                                                        padding:
+                                                            "4px 9px",
+                                                        borderRadius:
+                                                            "999px",
+                                                        fontSize: "11px",
+                                                        fontWeight: 700,
+                                                        background:
+                                                            status ===
+                                                            "LATE"
+                                                                ? "#fffaeb"
+                                                                : status ===
+                                                                  "ABSENT"
+                                                                ? "#fef3f2"
+                                                                : "#ecfdf3",
+                                                        color:
+                                                            status ===
+                                                            "LATE"
+                                                                ? "#b54708"
+                                                                : status ===
+                                                                  "ABSENT"
+                                                                ? "#b42318"
+                                                                : "#067647",
+                                                    }}
+                                                >
+                                                    {status ||
+                                                        "PRESENT"}
+                                                </span>
+
+                                                <div
+                                                    style={{
+                                                        marginTop: "4px",
+                                                        color: "#98a2b3",
+                                                        fontSize: "10px",
+                                                    }}
+                                                >
+                                                    {formatDateTime(
+                                                        getAttendanceTimestamp(
+                                                            record
+                                                        )
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })
                         ) : (
                             <div
                                 style={{
-                                    padding:
-                                        "80px 20px",
+                                    textAlign: "center",
+                                    padding: "30px 10px",
+                                    color: "#98a2b3",
+                                    fontSize: "13px",
                                 }}
                             >
-                                <FaQrcode
-                                    size={60}
-                                    style={{
-                                        color:
-                                            "#98a2b3",
-                                        marginBottom:
-                                            "15px",
-                                    }}
-                                />
-
-                                <h3
-                                    style={{
-                                        margin:
-                                            "0 0 8px",
-                                    }}
-                                >
-                                    No Active Session
-                                </h3>
-
-                                <p
-                                    style={{
-                                        color:
-                                            "#667085",
-                                        margin:
-                                            0,
-                                    }}
-                                >
-                                    Select a subject
-                                    and start
-                                    attendance.
-                                </p>
-                            </div>
-                        )}
-                    </div>
-
-                    {/* =================================================
-                        ATTENDANCE BREAKDOWN
-                    ================================================= */}
-
-                    <div
-                        style={{
-                            background:
-                                "#ffffff",
-                            borderRadius:
-                                "16px",
-                            padding:
-                                "24px",
-                            boxShadow:
-                                "0 4px 15px rgba(0,0,0,0.06)",
-                        }}
-                    >
-                        <div
-                            style={{
-                                display:
-                                    "flex",
-                                alignItems:
-                                    "center",
-                                gap:
-                                    "10px",
-                                marginBottom:
-                                    "20px",
-                            }}
-                        >
-                            <FaChartBar
-                                style={{
-                                    color:
-                                        "#4f46e5",
-                                }}
-                            />
-
-                            <h2
-                                style={{
-                                    margin:
-                                        0,
-                                    fontSize:
-                                        "21px",
-                                }}
-                            >
-                                Attendance Breakdown
-                            </h2>
-                        </div>
-
-                        {/* PRESENT */}
-
-                        <div
-                            style={{
-                                marginBottom:
-                                    "18px",
-                            }}
-                        >
-                            <div
-                                style={{
-                                    display:
-                                        "flex",
-                                    justifyContent:
-                                        "space-between",
-                                    marginBottom:
-                                        "8px",
-                                }}
-                            >
-                                <span
-                                    style={{
-                                        fontWeight:
-                                            600,
-                                    }}
-                                >
-                                    Present
-                                </span>
-
-                                <span>
-                                    {present}
-                                </span>
-                            </div>
-
-                            <div
-                                style={{
-                                    height:
-                                        "10px",
-                                    background:
-                                        "#e5e7eb",
-                                    borderRadius:
-                                        "999px",
-                                    overflow:
-                                        "hidden",
-                                }}
-                            >
-                                <div
-                                    style={{
-                                        width:
-                                            total >
-                                            0
-                                                ? `${Math.min(
-                                                      (present /
-                                                          total) *
-                                                          100,
-                                                      100
-                                                  )}%`
-                                                : "0%",
-                                        height:
-                                            "100%",
-                                        background:
-                                            "#16a34a",
-                                        borderRadius:
-                                            "999px",
-                                    }}
-                                />
-                            </div>
-                        </div>
-
-                        {/* LATE */}
-
-                        <div
-                            style={{
-                                marginBottom:
-                                    "18px",
-                            }}
-                        >
-                            <div
-                                style={{
-                                    display:
-                                        "flex",
-                                    justifyContent:
-                                        "space-between",
-                                    marginBottom:
-                                        "8px",
-                                }}
-                            >
-                                <span
-                                    style={{
-                                        fontWeight:
-                                            600,
-                                    }}
-                                >
-                                    Late
-                                </span>
-
-                                <span>
-                                    {late}
-                                </span>
-                            </div>
-
-                            <div
-                                style={{
-                                    height:
-                                        "10px",
-                                    background:
-                                        "#e5e7eb",
-                                    borderRadius:
-                                        "999px",
-                                    overflow:
-                                        "hidden",
-                                }}
-                            >
-                                <div
-                                    style={{
-                                        width:
-                                            total >
-                                            0
-                                                ? `${Math.min(
-                                                      (late /
-                                                          total) *
-                                                          100,
-                                                      100
-                                                  )}%`
-                                                : "0%",
-                                        height:
-                                            "100%",
-                                        background:
-                                            "#d97706",
-                                        borderRadius:
-                                            "999px",
-                                    }}
-                                />
-                            </div>
-                        </div>
-
-                        {/* ABSENT */}
-
-                        <div
-                            style={{
-                                marginBottom:
-                                    "18px",
-                            }}
-                        >
-                            <div
-                                style={{
-                                    display:
-                                        "flex",
-                                    justifyContent:
-                                        "space-between",
-                                    marginBottom:
-                                        "8px",
-                                }}
-                            >
-                                <span
-                                    style={{
-                                        fontWeight:
-                                            600,
-                                    }}
-                                >
-                                    Absent
-                                </span>
-
-                                <span>
-                                    {absent}
-                                </span>
-                            </div>
-
-                            <div
-                                style={{
-                                    height:
-                                        "10px",
-                                    background:
-                                        "#e5e7eb",
-                                    borderRadius:
-                                        "999px",
-                                    overflow:
-                                        "hidden",
-                                }}
-                            >
-                                <div
-                                    style={{
-                                        width:
-                                            total >
-                                            0
-                                                ? `${Math.min(
-                                                      (absent /
-                                                          total) *
-                                                          100,
-                                                      100
-                                                  )}%`
-                                                : "0%",
-                                        height:
-                                            "100%",
-                                        background:
-                                            "#dc2626",
-                                        borderRadius:
-                                            "999px",
-                                    }}
-                                />
-                            </div>
-                        </div>
-
-                        {/* PERCENTAGE */}
-
-                        <div
-                            style={{
-                                borderTop:
-                                    "1px solid #eaecf0",
-                                paddingTop:
-                                    "18px",
-                                marginTop:
-                                    "20px",
-                            }}
-                        >
-                            <div
-                                style={{
-                                    display:
-                                        "flex",
-                                    justifyContent:
-                                        "space-between",
-                                    marginBottom:
-                                        "10px",
-                                }}
-                            >
-                                <span>
-                                    Attendance
-                                    Percentage
-                                </span>
-
-                                <strong>
-                                    {
-                                        percentage
-                                    }
-                                    %
-                                </strong>
-                            </div>
-
-                            <div
-                                style={{
-                                    height:
-                                        "14px",
-                                    background:
-                                        "#e5e7eb",
-                                    borderRadius:
-                                        "999px",
-                                    overflow:
-                                        "hidden",
-                                }}
-                            >
-                                <div
-                                    style={{
-                                        width: `${Math.min(
-                                            Math.max(
-                                                percentage,
-                                                0
-                                            ),
-                                            100
-                                        )}%`,
-                                        height:
-                                            "100%",
-                                        background:
-                                            "#4f46e5",
-                                        borderRadius:
-                                            "999px",
-                                    }}
-                                />
-                            </div>
-                        </div>
-
-                        {hasFinalStatistics && (
-                            <div
-                                style={{
-                                    marginTop:
-                                        "22px",
-                                    padding:
-                                        "14px",
-                                    borderRadius:
-                                        "10px",
-                                    background:
-                                        "#ecfdf3",
-                                    border:
-                                        "1px solid #abefc6",
-                                    color:
-                                        "#067647",
-                                    display:
-                                        "flex",
-                                    alignItems:
-                                        "center",
-                                    gap:
-                                        "10px",
-                                }}
-                            >
-                                <FaCheckCircle />
-
-                                <span>
-                                    Final attendance
-                                    statistics
-                                    recorded.
-                                </span>
+                                No attendance records available.
                             </div>
                         )}
                     </div>
                 </div>
 
                 {/* =================================================
-                    LIVE ATTENDANCE
+                    ATTENDANCE ALERT
                 ================================================= */}
 
                 <div
                     style={{
-                        background:
-                            "#ffffff",
-                        borderRadius:
-                            "16px",
-                        padding:
-                            "24px",
-                        marginTop:
-                            "20px",
+                        background: "#ffffff",
+                        borderRadius: "16px",
+                        padding: "20px",
+                        marginBottom: "20px",
                         boxShadow:
                             "0 4px 15px rgba(0,0,0,0.06)",
                     }}
                 >
                     <div
                         style={{
-                            display:
-                                "flex",
-                            justifyContent:
-                                "space-between",
-                            alignItems:
-                                "center",
-                            gap:
-                                "15px",
-                            marginBottom:
-                                "20px",
-                            flexWrap:
-                                "wrap",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "12px",
                         }}
                     >
                         <div
                             style={{
-                                display:
-                                    "flex",
-                                alignItems:
-                                    "center",
-                                gap:
-                                    "10px",
-                            }}
-                        >
-                            <FaHistory
-                                style={{
-                                    color:
-                                        "#4f46e5",
-                                }}
-                            />
-
-                            <h2
-                                style={{
-                                    margin:
-                                        0,
-                                    fontSize:
-                                        "21px",
-                                }}
-                            >
-                                Live Attendance
-                            </h2>
-                        </div>
-
-                        {isSessionActive && (
-                            <div
-                                style={{
-                                    display:
-                                        "flex",
-                                    alignItems:
-                                        "center",
-                                    gap:
-                                        "8px",
-                                    fontSize:
-                                        "13px",
-                                    color:
-                                        "#067647",
-                                    background:
-                                        "#ecfdf3",
-                                    border:
-                                        "1px solid #abefc6",
-                                    padding:
-                                        "7px 11px",
-                                    borderRadius:
-                                        "999px",
-                                }}
-                            >
-                                <span
-                                    style={{
-                                        width:
-                                            "8px",
-                                        height:
-                                            "8px",
-                                        borderRadius:
-                                            "50%",
-                                        background:
-                                            "#16a34a",
-                                    }}
-                                />
-
-                                Live · Updates every
-                                second
-                            </div>
-                        )}
-                    </div>
-
-                    {/* =================================================
-                        LATEST SCAN
-                    ================================================= */}
-
-                    {latestAttendance ? (
-                        <div
-                            style={{
-                                border:
-                                    "1px solid #d1fadf",
+                                width: "42px",
+                                height: "42px",
+                                borderRadius: "12px",
                                 background:
-                                    "#f6fef9",
-                                borderRadius:
-                                    "14px",
-                                padding:
-                                    "18px",
-                                marginBottom:
-                                    "20px",
-                            }}
-                        >
-                            <div
-                                style={{
-                                    display:
-                                        "flex",
-                                    alignItems:
-                                        "center",
-                                    gap:
-                                        "10px",
-                                    marginBottom:
-                                        "14px",
-                                }}
-                            >
-                                <FaCheckCircle
-                                    style={{
-                                        color:
-                                            "#16a34a",
-                                    }}
-                                />
-
-                                <strong
-                                    style={{
-                                        color:
-                                            "#067647",
-                                    }}
-                                >
-                                    Latest Attendance
-                                </strong>
-                            </div>
-
-                            <div
-                                style={{
-                                    display:
-                                        "grid",
-                                    gridTemplateColumns:
-                                        "repeat(auto-fit, minmax(180px, 1fr))",
-                                    gap:
-                                        "15px",
-                                }}
-                            >
-                                <div>
-                                    <small
-                                        style={{
-                                            color:
-                                                "#667085",
-                                        }}
-                                    >
-                                        Student
-                                    </small>
-
-                                    <div
-                                        style={{
-                                            fontWeight:
-                                                700,
-                                            fontSize:
-                                                "17px",
-                                            marginTop:
-                                                "4px",
-                                        }}
-                                    >
-                                        {getStudentName(
-                                            latestAttendance
-                                        )}
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <small
-                                        style={{
-                                            color:
-                                                "#667085",
-                                        }}
-                                    >
-                                        Register Number
-                                    </small>
-
-                                    <div
-                                        style={{
-                                            fontWeight:
-                                                600,
-                                            marginTop:
-                                                "4px",
-                                        }}
-                                    >
-                                        {getRegisterNumber(
-                                            latestAttendance
-                                        )}
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <small
-                                        style={{
-                                            color:
-                                                "#667085",
-                                        }}
-                                    >
-                                        Status
-                                    </small>
-
-                                    <div
-                                        style={{
-                                            fontWeight:
-                                                700,
-                                            marginTop:
-                                                "4px",
-                                            color:
-                                                getAttendanceStatus(
-                                                    latestAttendance
-                                                ) ===
-                                                "LATE"
-                                                    ? "#d97706"
-                                                    : "#16a34a",
-                                        }}
-                                    >
-                                        {getAttendanceStatus(
-                                            latestAttendance
-                                        ) ||
-                                            "PRESENT"}
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <small
-                                        style={{
-                                            color:
-                                                "#667085",
-                                        }}
-                                    >
-                                        Scan Time
-                                    </small>
-
-                                    <div
-                                        style={{
-                                            fontWeight:
-                                                600,
-                                            marginTop:
-                                                "4px",
-                                        }}
-                                    >
-                                        {formatDateTime(
-                                            getAttendanceTimestamp(
-                                                latestAttendance
-                                            )
-                                        )}
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <small
-                                        style={{
-                                            color:
-                                                "#667085",
-                                        }}
-                                    >
-                                        Department
-                                    </small>
-
-                                    <div
-                                        style={{
-                                            fontWeight:
-                                                600,
-                                            marginTop:
-                                                "4px",
-                                        }}
-                                    >
-                                        {getStudentDepartment(
-                                            latestAttendance
-                                        )}
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <small
-                                        style={{
-                                            color:
-                                                "#667085",
-                                        }}
-                                    >
-                                        Attendance ID
-                                    </small>
-
-                                    <div
-                                        style={{
-                                            fontWeight:
-                                                600,
-                                            marginTop:
-                                                "4px",
-                                        }}
-                                    >
-                                        {getAttendanceId(
-                                            latestAttendance
-                                        ) ??
-                                            "-"}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    ) : (
-                        <div
-                            style={{
-                                background:
-                                    "#f8fafc",
-                                border:
-                                    "1px solid #eaecf0",
-                                borderRadius:
-                                    "12px",
-                                padding:
-                                    "22px",
-                                textAlign:
-                                    "center",
-                                color:
-                                    "#667085",
-                                marginBottom:
-                                    "20px",
+                                    absent > 0
+                                        ? "#fef3f2"
+                                        : "#ecfdf3",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
                             }}
                         >
                             <FaUserGraduate
-                                size={28}
                                 style={{
-                                    marginBottom:
-                                        "8px",
+                                    color:
+                                        absent > 0
+                                            ? "#dc2626"
+                                            : "#16a34a",
                                 }}
                             />
-
-                            <div>
-                                No student has scanned
-                                this attendance QR yet.
-                            </div>
                         </div>
-                    )}
 
-                    {/* =================================================
-                        ATTENDANCE TABLE
-                    ================================================= */}
-
-                    {attendanceRecords.length >
-                    0 ? (
-                        <div
-                            style={{
-                                overflowX:
-                                    "auto",
-                                border:
-                                    "1px solid #eaecf0",
-                                borderRadius:
-                                    "12px",
-                            }}
-                        >
-                            <table
+                        <div>
+                            <h3
                                 style={{
-                                    width:
-                                        "100%",
-                                    borderCollapse:
-                                        "collapse",
-                                    minWidth:
-                                        "800px",
+                                    margin: 0,
+                                    fontSize: "16px",
+                                    color: "#172033",
                                 }}
                             >
-                                <thead>
-                                    <tr
-                                        style={{
-                                            background:
-                                                "#f8fafc",
-                                        }}
-                                    >
-                                        <th
-                                            style={{
-                                                padding:
-                                                    "12px",
-                                                textAlign:
-                                                    "left",
-                                                fontSize:
-                                                    "13px",
-                                                color:
-                                                    "#667085",
-                                            }}
-                                        >
-                                            #
-                                        </th>
+                                Attendance Overview
+                            </h3>
 
-                                        <th
-                                            style={{
-                                                padding:
-                                                    "12px",
-                                                textAlign:
-                                                    "left",
-                                                fontSize:
-                                                    "13px",
-                                                color:
-                                                    "#667085",
-                                            }}
-                                        >
-                                            Student
-                                        </th>
-
-                                        <th
-                                            style={{
-                                                padding:
-                                                    "12px",
-                                                textAlign:
-                                                    "left",
-                                                fontSize:
-                                                    "13px",
-                                                color:
-                                                    "#667085",
-                                            }}
-                                        >
-                                            Register No.
-                                        </th>
-
-                                        <th
-                                            style={{
-                                                padding:
-                                                    "12px",
-                                                textAlign:
-                                                    "left",
-                                                fontSize:
-                                                    "13px",
-                                                color:
-                                                    "#667085",
-                                            }}
-                                        >
-                                            Department
-                                        </th>
-
-                                        <th
-                                            style={{
-                                                padding:
-                                                    "12px",
-                                                textAlign:
-                                                    "left",
-                                                fontSize:
-                                                    "13px",
-                                                color:
-                                                    "#667085",
-                                            }}
-                                        >
-                                            Status
-                                        </th>
-
-                                        <th
-                                            style={{
-                                                padding:
-                                                    "12px",
-                                                textAlign:
-                                                    "left",
-                                                fontSize:
-                                                    "13px",
-                                                color:
-                                                    "#667085",
-                                            }}
-                                        >
-                                            Scan Time
-                                        </th>
-                                    </tr>
-                                </thead>
-
-                                <tbody>
-                                    {attendanceRecords.map(
-                                        (
-                                            record,
-                                            index
-                                        ) => {
-                                            const status =
-                                                getAttendanceStatus(
-                                                    record
-                                                );
-
-                                            return (
-                                                <tr
-                                                    key={
-                                                        getAttendanceId(
-                                                            record
-                                                        ) ??
-                                                        `${index}-${getRegisterNumber(
-                                                            record
-                                                        )}`
-                                                    }
-                                                    style={{
-                                                        borderTop:
-                                                            "1px solid #eaecf0",
-                                                        background:
-                                                            index ===
-                                                            0
-                                                                ? "#f6fef9"
-                                                                : "#ffffff",
-                                                    }}
-                                                >
-                                                    <td
-                                                        style={{
-                                                            padding:
-                                                                "12px",
-                                                            fontWeight:
-                                                                600,
-                                                        }}
-                                                    >
-                                                        {index +
-                                                            1}
-                                                    </td>
-
-                                                    <td
-                                                        style={{
-                                                            padding:
-                                                                "12px",
-                                                            fontWeight:
-                                                                600,
-                                                        }}
-                                                    >
-                                                        {getStudentName(
-                                                            record
-                                                        )}
-                                                    </td>
-
-                                                    <td
-                                                        style={{
-                                                            padding:
-                                                                "12px",
-                                                        }}
-                                                    >
-                                                        {getRegisterNumber(
-                                                            record
-                                                        )}
-                                                    </td>
-
-                                                    <td
-                                                        style={{
-                                                            padding:
-                                                                "12px",
-                                                        }}
-                                                    >
-                                                        {getStudentDepartment(
-                                                            record
-                                                        )}
-                                                    </td>
-
-                                                    <td
-                                                        style={{
-                                                            padding:
-                                                                "12px",
-                                                        }}
-                                                    >
-                                                        <span
-                                                            style={{
-                                                                display:
-                                                                    "inline-block",
-                                                                padding:
-                                                                    "5px 10px",
-                                                                borderRadius:
-                                                                    "999px",
-                                                                fontSize:
-                                                                    "12px",
-                                                                fontWeight:
-                                                                    700,
-                                                                background:
-                                                                    status ===
-                                                                    "LATE"
-                                                                        ? "#fffaeb"
-                                                                        : status ===
-                                                                          "ABSENT"
-                                                                        ? "#fef3f2"
-                                                                        : "#ecfdf3",
-                                                                color:
-                                                                    status ===
-                                                                    "LATE"
-                                                                        ? "#b54708"
-                                                                        : status ===
-                                                                          "ABSENT"
-                                                                        ? "#b42318"
-                                                                        : "#067647",
-                                                            }}
-                                                        >
-                                                            {status ||
-                                                                "PRESENT"}
-                                                        </span>
-                                                    </td>
-
-                                                    <td
-                                                        style={{
-                                                            padding:
-                                                                "12px",
-                                                        }}
-                                                    >
-                                                        {formatDateTime(
-                                                            getAttendanceTimestamp(
-                                                                record
-                                                            )
-                                                        )}
-                                                    </td>
-                                                </tr>
-                                            );
-                                        }
-                                    )}
-                                </tbody>
-                            </table>
+                            <p
+                                style={{
+                                    margin: "4px 0 0",
+                                    color: "#667085",
+                                    fontSize: "13px",
+                                }}
+                            >
+                                {isSessionActive
+                                    ? `${attendanceRecords.length} attendance record${
+                                          attendanceRecords.length !== 1
+                                              ? "s"
+                                              : ""
+                                      } received in the active session.`
+                                    : absent > 0
+                                    ? `${absent} student${
+                                          absent !== 1 ? "s" : ""
+                                      } currently marked absent.`
+                                    : "No attendance concerns in the current statistics."}
+                            </p>
                         </div>
-                    ) : (
-                        <div
-                            style={{
-                                textAlign:
-                                    "center",
-                                padding:
-                                    "20px",
-                                color:
-                                    "#98a2b3",
-                            }}
-                        >
-                            No attendance records
-                            available.
-                        </div>
-                    )}
-
-                    {lastAttendanceTime && (
-                        <div
-                            style={{
-                                marginTop:
-                                    "12px",
-                                fontSize:
-                                    "12px",
-                                color:
-                                    "#98a2b3",
-                                textAlign:
-                                    "right",
-                            }}
-                        >
-                            Last attendance update:{" "}
-                            {formatDateTime(
-                                lastAttendanceTime
-                            )}
-                        </div>
-                    )}
+                    </div>
                 </div>
 
                 {/* =================================================
@@ -4177,41 +3331,29 @@ const StaffDashboard = () => {
 
                 <div
                     style={{
-                        background:
-                            "#ffffff",
-                        borderRadius:
-                            "16px",
-                        padding:
-                            "20px",
-                        marginTop:
-                            "20px",
+                        background: "#ffffff",
+                        borderRadius: "16px",
+                        padding: "20px",
                         boxShadow:
                             "0 4px 15px rgba(0,0,0,0.06)",
                     }}
                 >
                     <div
                         style={{
-                            display:
-                                "flex",
-                            alignItems:
-                                "center",
-                            gap:
-                                "10px",
-                            marginBottom:
-                                "14px",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "10px",
+                            marginBottom: "18px",
                         }}
                     >
                         <FaClipboardCheck
-                            style={{
-                                color:
-                                    "#4f46e5",
-                            }}
+                            style={{ color: "#4f46e5" }}
                         />
 
                         <h3
                             style={{
-                                margin:
-                                    0,
+                                margin: 0,
+                                color: "#172033",
                             }}
                         >
                             Session Information
@@ -4220,84 +3362,40 @@ const StaffDashboard = () => {
 
                     <div
                         style={{
-                            display:
-                                "grid",
+                            display: "grid",
                             gridTemplateColumns:
-                                "repeat(auto-fit, minmax(220px, 1fr))",
-                            gap:
-                                "15px",
+                                "repeat(auto-fit, minmax(180px, 1fr))",
+                            gap: "15px",
                         }}
                     >
                         <div>
-                            <small
-                                style={{
-                                    color:
-                                        "#667085",
-                                }}
-                            >
-                                Session ID
-                            </small>
-
-                            <div
-                                style={{
-                                    fontWeight:
-                                        600,
-                                    marginTop:
-                                        "4px",
-                                }}
-                            >
-                                {sessionId ||
-                                    "-"}
-                            </div>
-                        </div>
-
-                        <div>
-                            <small
-                                style={{
-                                    color:
-                                        "#667085",
-                                }}
-                            >
+                            <small style={{ color: "#667085" }}>
                                 Status
                             </small>
-
                             <div
                                 style={{
-                                    fontWeight:
-                                        700,
-                                    marginTop:
-                                        "4px",
+                                    fontWeight: 700,
+                                    marginTop: "4px",
                                     color:
-                                        sessionStatus ===
-                                        "ACTIVE"
+                                        sessionStatus === "ACTIVE"
                                             ? "#16a34a"
-                                            : sessionStatus ===
-                                              "CLOSED"
+                                            : sessionStatus === "CLOSED"
                                             ? "#dc2626"
                                             : "#667085",
                                 }}
                             >
-                                {sessionStatus ||
-                                    "NOT STARTED"}
+                                {sessionStatus || "NOT STARTED"}
                             </div>
                         </div>
 
                         <div>
-                            <small
-                                style={{
-                                    color:
-                                        "#667085",
-                                }}
-                            >
+                            <small style={{ color: "#667085" }}>
                                 QR Refresh
                             </small>
-
                             <div
                                 style={{
-                                    fontWeight:
-                                        600,
-                                    marginTop:
-                                        "4px",
+                                    fontWeight: 600,
+                                    marginTop: "4px",
                                 }}
                             >
                                 Every 1 second
@@ -4305,21 +3403,13 @@ const StaffDashboard = () => {
                         </div>
 
                         <div>
-                            <small
-                                style={{
-                                    color:
-                                        "#667085",
-                                }}
-                            >
+                            <small style={{ color: "#667085" }}>
                                 QR Lifetime
                             </small>
-
                             <div
                                 style={{
-                                    fontWeight:
-                                        600,
-                                    marginTop:
-                                        "4px",
+                                    fontWeight: 600,
+                                    marginTop: "4px",
                                 }}
                             >
                                 15 seconds
@@ -4327,21 +3417,13 @@ const StaffDashboard = () => {
                         </div>
 
                         <div>
-                            <small
-                                style={{
-                                    color:
-                                        "#667085",
-                                }}
-                            >
+                            <small style={{ color: "#667085" }}>
                                 Live Attendance
                             </small>
-
                             <div
                                 style={{
-                                    fontWeight:
-                                        600,
-                                    marginTop:
-                                        "4px",
+                                    fontWeight: 600,
+                                    marginTop: "4px",
                                 }}
                             >
                                 Every 1 second
@@ -4349,26 +3431,32 @@ const StaffDashboard = () => {
                         </div>
 
                         <div>
-                            <small
-                                style={{
-                                    color:
-                                        "#667085",
-                                }}
-                            >
+                            <small style={{ color: "#667085" }}>
                                 Records Loaded
                             </small>
-
                             <div
                                 style={{
-                                    fontWeight:
-                                        600,
-                                    marginTop:
-                                        "4px",
+                                    fontWeight: 600,
+                                    marginTop: "4px",
                                 }}
                             >
-                                {
-                                    attendanceRecords.length
-                                }
+                                {attendanceRecords.length}
+                            </div>
+                        </div>
+
+                        <div>
+                            <small style={{ color: "#667085" }}>
+                                QR Countdown
+                            </small>
+                            <div
+                                style={{
+                                    fontWeight: 600,
+                                    marginTop: "4px",
+                                }}
+                            >
+                                {isSessionActive
+                                    ? `${secondsLeft}s`
+                                    : "Inactive"}
                             </div>
                         </div>
                     </div>
@@ -4382,7 +3470,7 @@ const StaffDashboard = () => {
             <style>
                 {`
                     @media (max-width: 900px) {
-                        div[style*="grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr)"] {
+                        div[style*="minmax(0, 1.35fr)"] {
                             grid-template-columns: 1fr !important;
                         }
                     }
