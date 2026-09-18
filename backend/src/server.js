@@ -84,9 +84,14 @@ const allowedOrigins = [
 
     "https://attendance-management-system-inky-five.vercel.app",
 
-    "https://attendance-management-system-gpci.onrender.com"
-];
+    "https://attendance-management-system-57udpazor-vijay-7fab.vercel.app",
 
+    "https://attendance-management-system-gpci.onrender.com",
+];
+console.log(
+    "ALLOWED ORIGINS:",
+    allowedOrigins
+);
 const corsOptions = {
     origin: (
         origin,
@@ -107,15 +112,18 @@ const corsOptions = {
         }
 
         if (
-            allowedOrigins.includes(
-                origin
-            )
-        ) {
-            return callback(
-                null,
-                true
-            );
-        }
+    allowedOrigins.includes(
+        origin
+    ) ||
+    origin.endsWith(
+        ".vercel.app"
+    )
+) {
+    return callback(
+        null,
+        true
+    );
+}
 
         console.error(
             "CORS BLOCKED:",
@@ -158,36 +166,14 @@ const corsOptions = {
 app.use(
     cors(corsOptions)
 );
-
+app.options(
+    "*",
+    cors(corsOptions)
+);
 // =====================================================
 // OPTIONS / PREFLIGHT
 // =====================================================
 
-app.use(
-    (
-        req,
-        res,
-        next
-    ) => {
-
-        if (
-            req.method ===
-            "OPTIONS"
-        ) {
-
-            console.log(
-                "CORS PREFLIGHT:",
-                req.originalUrl
-            );
-
-            return res
-                .status(204)
-                .end();
-        }
-
-        next();
-    }
-);
 
 // =====================================================
 // BODY PARSERS
