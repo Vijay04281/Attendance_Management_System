@@ -238,7 +238,7 @@ function Login() {
       // =================================================
 
       const response = await fetch(
-        "https://attendance-management-system-gpci.onrender.com/api/auth/login",
+        "/api/auth/login",
         {
           method: "POST",
           headers: {

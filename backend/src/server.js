@@ -5,6 +5,10 @@
 
 const express = require("express");
 const cors = require("cors");
+const path = require("path");
+const fs = require("fs");
+
+const frontendDist = path.resolve(__dirname, "../../frontend/dist");
 
 require("dotenv").config();
 
@@ -71,100 +75,17 @@ app.set(
 // PORT
 // =====================================================
 
-const PORT =
-    process.env.PORT || 5000;
+const PORT = 3000;
 
 // =====================================================
 // CORS
 // =====================================================
 
-const allowedOrigins = [
-    "http://localhost:3000",
-    "http://localhost:5173",
-
-    "https://attendance-management-system-inky-five.vercel.app",
-
-    "https://attendance-management-system-57udpazor-vijay-7fab.vercel.app",
-
-    "https://attendance-management-system-gpci.onrender.com",
-];
-console.log(
-    "ALLOWED ORIGINS:",
-    allowedOrigins
-);
-const corsOptions = {
-    origin: (
-        origin,
-        callback
-    ) => {
-
-        console.log(
-            "CORS ORIGIN:",
-            origin || "NO ORIGIN"
-        );
-
-        // Requests such as Postman/server-to-server
-        if (!origin) {
-            return callback(
-                null,
-                true
-            );
-        }
-
-        if (
-    allowedOrigins.includes(
-        origin
-    ) ||
-    origin.endsWith(
-        ".vercel.app"
-    )
-) {
-    return callback(
-        null,
-        true
-    );
-}
-
-        console.error(
-            "CORS BLOCKED:",
-            origin
-        );
-
-        return callback(
-            new Error(
-                `Origin not allowed by CORS: ${origin}`
-            )
-        );
-    },
-
-    credentials: true,
-
-    methods: [
-        "GET",
-        "POST",
-        "PUT",
-        "PATCH",
-        "DELETE",
-        "OPTIONS"
-    ],
-
-    allowedHeaders: [
-        "Origin",
-        "X-Requested-With",
-        "Content-Type",
-        "Accept",
-        "Authorization"
-    ],
-
-    optionsSuccessStatus: 204
-};
-
-// =====================================================
-// CORS MIDDLEWARE
-// =====================================================
-
 app.use(
-    cors(corsOptions)
+    cors({
+        origin: true,
+        credentials: true
+    })
 );
 // =====================================================
 // OPTIONS / PREFLIGHT
@@ -224,31 +145,10 @@ app.use(
 );
 
 // =====================================================
-// ROOT
+// FRONTEND STATIC FILES
 // =====================================================
 
-app.get(
-    "/",
-    (
-        req,
-        res
-    ) => {
-
-        res.status(200).json({
-            success: true,
-
-            message:
-                "Attendance Management System API is running",
-
-            environment:
-                process.env.NODE_ENV ||
-                "development",
-
-            timestamp:
-                new Date().toISOString()
-        });
-    }
-);
+app.use(express.static(frontendDist));
 
 // =====================================================
 // HEALTH
@@ -568,7 +468,7 @@ app.get(
 );
 
 // =====================================================
-// 404
+// SPA FALLBACK / 404
 // =====================================================
 
 app.use(
@@ -576,6 +476,12 @@ app.use(
         req,
         res
     ) => {
+        if (req.method === "GET" && !req.path.startsWith("/api") && !req.path.startsWith("/health")) {
+            const indexPath = path.join(frontendDist, "index.html");
+            if (fs.existsSync(indexPath)) {
+                return res.sendFile(indexPath);
+            }
+        }
 
         console.log(
             "404 ROUTE NOT FOUND:",

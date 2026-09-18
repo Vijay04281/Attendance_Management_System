@@ -6,7 +6,7 @@ import {
   FaUserGraduate,
 } from "react-icons/fa";
 
-const API_URL = "https://attendance-management-system-gpci.onrender.com/api";
+const API_URL = "/api";
 
 function StaffStudents() {
   const [students, setStudents] = useState([]);

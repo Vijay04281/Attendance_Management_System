@@ -24,7 +24,7 @@ import { Html5Qrcode } from "html5-qrcode";
 // =====================================================
 
 const API_URL =
-    "https://attendance-management-system-gpci.onrender.com/api";
+    "/api";
 
 const SCAN_URL =
     `${API_URL}/attendance/scan`;

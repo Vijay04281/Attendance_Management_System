@@ -26,7 +26,7 @@ import {
 
 const API_BASE_URL =
     import.meta.env.VITE_API_URL ||
-    "https://attendance-management-system-gpci.onrender.com/api";
+    "/api";
 
 // =====================================================
 // HOD DASHBOARD

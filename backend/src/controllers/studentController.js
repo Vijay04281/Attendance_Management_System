@@ -4,7 +4,7 @@
 // =====================================================
 
 const db = require("../config/db");
-const bcrypt = require("bcrypt");
+const bcrypt = require("bcryptjs");
 
 // =====================================================
 // HELPER: Get department by name/code/id

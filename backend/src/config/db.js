@@ -1,91 +1,63 @@
 // =====================================================
 // DATABASE CONNECTION
-// MYSQL / AIVEN
+// MYSQL / AI STUDIO MOCK FALLBACK
 // =====================================================
 
-const mysql = require("mysql2/promise");
+const mockDb = require("./mockDb");
 
-// =====================================================
-// VALIDATE ENVIRONMENT
-// =====================================================
+let dbInstance = mockDb;
 
-if (!process.env.DB_HOST) {
-  throw new Error("DB_HOST is not configured");
-}
-
-if (!process.env.DB_PORT) {
-  throw new Error("DB_PORT is not configured");
-}
-
-if (!process.env.DB_USER) {
-  throw new Error("DB_USER is not configured");
-}
-
-if (!process.env.DB_PASSWORD) {
-  throw new Error("DB_PASSWORD is not configured");
-}
-
-if (!process.env.DB_NAME) {
-  throw new Error("DB_NAME is not configured");
-}
-
-// =====================================================
-// MYSQL POOL
-// =====================================================
-
-const pool = mysql.createPool({
-  host: process.env.DB_HOST,
-  port: Number(process.env.DB_PORT),
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-
-  waitForConnections: true,
-
-  connectionLimit: 10,
-
-  queueLimit: 0,
-
-  connectTimeout: 20000,
-
-  enableKeepAlive: true,
-
-  keepAliveInitialDelay: 0,
-
-  ssl: {
-    rejectUnauthorized: false,
-  },
-});
-
-// =====================================================
-// DATABASE CONNECTION TEST
-// =====================================================
-
-(async () => {
+if (process.env.DB_HOST && process.env.DB_USER) {
   try {
-    const connection = await pool.getConnection();
+    const mysql = require("mysql2/promise");
+    const pool = mysql.createPool({
+      host: process.env.DB_HOST,
+      port: Number(process.env.DB_PORT) || 3306,
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD || "",
+      database: process.env.DB_NAME || "attendance_management",
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0,
+      connectTimeout: 10000,
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 0,
+      ssl: {
+        rejectUnauthorized: false,
+      },
+    });
 
-    console.log("==============================================");
-    console.log("MySQL Database Connected Successfully");
-    console.log("==============================================");
-    console.log(`Host: ${process.env.DB_HOST}`);
-    console.log(`Port: ${process.env.DB_PORT}`);
-    console.log(`Database: ${process.env.DB_NAME}`);
-    console.log("==============================================");
-
-    connection.release();
-  } catch (error) {
-    console.error("==============================================");
-    console.error("MySQL Database Connection Failed");
-    console.error("==============================================");
-    console.error("Code:", error.code);
-    console.error("Message:", error.message);
-    console.error("==============================================");
+    (async () => {
+      try {
+        const connection = await pool.getConnection();
+        console.log("==============================================");
+        console.log("MySQL Database Connected Successfully");
+        console.log(`Host: ${process.env.DB_HOST}`);
+        console.log(`Database: ${process.env.DB_NAME}`);
+        console.log("==============================================");
+        connection.release();
+        dbInstance = pool;
+      } catch (error) {
+        console.warn("==============================================");
+        console.warn("MySQL Database Connection Failed, using in-memory mock");
+        console.warn("Message:", error.message);
+        console.warn("==============================================");
+        dbInstance = mockDb;
+      }
+    })();
+  } catch (err) {
+    console.warn("MySQL driver initialization failed, using mock database:", err.message);
+    dbInstance = mockDb;
   }
-})();
+} else {
+  console.log("==============================================");
+  console.log("DB_HOST not configured — using active in-memory SQLite database");
+  console.log("==============================================");
+}
 
-// =====================================================
-// EXPORT POOL
-// =====================================================
-
-module.exports = pool;
+module.exports = {
+  query: (...args) => dbInstance.query(...args),
+  execute: (...args) => (dbInstance.execute ? dbInstance.execute(...args) : dbInstance.query(...args)),
+  getConnection: (...args) => dbInstance.getConnection(...args),
+  end: (...args) => (dbInstance.end ? dbInstance.end(...args) : Promise.resolve()),
+};

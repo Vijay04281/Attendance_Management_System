@@ -27,7 +27,7 @@ import {
 // =====================================================
 
 const API_BASE =
-    "https://attendance-management-system-gpci.onrender.com/api";
+    "/api";
 
 // =====================================================
 // STAFF DASHBOARD
@@ -1548,10 +1548,6 @@ console.log(
 
 setAttendanceRecords(
     finalResult?.records || []
-);
-
-setAttendanceStats(
-    finalStatistics
 );
 
 setPresent(

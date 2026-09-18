@@ -14,7 +14,7 @@ import {
     FaClock,
 } from "react-icons/fa";
 
-const API_URL = "https://attendance-management-system-gpci.onrender.com/api";
+const API_URL = "/api";
 
 const Attendance = () => {
     // =====================================================

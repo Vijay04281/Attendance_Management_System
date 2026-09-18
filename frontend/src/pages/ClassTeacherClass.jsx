@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_URL ||
-  "https://attendance-management-system-gpci.onrender.com/api";
+  "/api";
 
 // =====================================================
 // CLASS TEACHER MY CLASS

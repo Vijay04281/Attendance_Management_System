@@ -1,0 +1,10 @@
+{
+  "name": "Attendance Management System",
+  "description": "A comprehensive attendance management system with role-based dashboards for students, staff, class teachers, HODs, and administrators.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
