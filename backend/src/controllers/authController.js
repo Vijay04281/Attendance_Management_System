@@ -58,30 +58,49 @@ const login = async (req, res) => {
 
         const loginUsername =
             String(username).trim();
-
+        console.log("STEP 1 - USERNAME NORMALIZED");
         // -------------------------------------------------
         // FIND USER
         // -------------------------------------------------
+// -------------------------------------------------
+// FIND USER
+// -------------------------------------------------
 
-        const [users] = await db.query(
-            `
-            SELECT
-                user_id,
-                username,
-                password,
-                role
-            FROM users
-            WHERE username = ?
-            LIMIT 1
-            `,
-            [loginUsername]
-        );
+console.log("STEP 2 - BEFORE DB QUERY");
+
+// TEST DATABASE
+console.log("STEP 2A - SIMPLE QUERY TEST");
+
+const [testRows] = await db.query(
+    "SELECT 1 AS test"
+);
+
+console.log("STEP 2B - SIMPLE QUERY SUCCESS");
+console.log(testRows);
+
+console.log("STEP 2C - USER QUERY START");
+
+const [users] = await db.query(
+    `
+    SELECT
+        user_id,
+        username,
+        password,
+        role
+    FROM users
+    WHERE username = ?
+    LIMIT 1
+    `,
+    [loginUsername]
+);
+
+console.log("STEP 3 - AFTER DB QUERY");
 
         console.log(
             "User found:",
             users.length > 0
         );
-
+console.log("STEP 3 - AFTER DB QUERY");
         // -------------------------------------------------
         // USER NOT FOUND
         // -------------------------------------------------
@@ -151,11 +170,11 @@ const login = async (req, res) => {
             "Password match:",
             passwordMatch
         );
-
+console.log("STEP 5 - AFTER PASSWORD CHECK");
         // -------------------------------------------------
         // INVALID PASSWORD
         // -------------------------------------------------
-
+console.log("STEP 6 - BEFORE INVALID PASSWORD CHECK");
         if (!passwordMatch) {
             console.log(
                 "Login failed: incorrect password"
@@ -167,7 +186,7 @@ const login = async (req, res) => {
                     "Invalid username or password"
             });
         }
-
+console.log("STEP 7 - PASSWORD VALID");
         // -------------------------------------------------
         // VALIDATE ROLE
         // -------------------------------------------------
@@ -192,7 +211,7 @@ const login = async (req, res) => {
         // -------------------------------------------------
         // JWT SECRET CHECK
         // -------------------------------------------------
-
+console.log("STEP 8 - BEFORE JWT");
         if (!process.env.JWT_SECRET) {
             console.error(
                 "JWT_SECRET is missing from environment variables"
@@ -204,7 +223,7 @@ const login = async (req, res) => {
                     "Server authentication configuration error"
             });
         }
-
+console.log("STEP 9 - AFTER JWT");
         // -------------------------------------------------
         // CREATE JWT
         // -------------------------------------------------
