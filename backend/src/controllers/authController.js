@@ -58,11 +58,11 @@ const login = async (req, res) => {
 
         const loginUsername =
             String(username).trim();
-        console.log("STEP 1 - USERNAME NORMALIZED");
+
         // -------------------------------------------------
         // FIND USER
         // -------------------------------------------------
-console.log("STEP 2 - BEFORE DB QUERY");
+
         const [users] = await db.query(
             `
             SELECT
@@ -81,7 +81,7 @@ console.log("STEP 2 - BEFORE DB QUERY");
             "User found:",
             users.length > 0
         );
-console.log("STEP 3 - AFTER DB QUERY");
+
         // -------------------------------------------------
         // USER NOT FOUND
         // -------------------------------------------------
@@ -151,11 +151,11 @@ console.log("STEP 3 - AFTER DB QUERY");
             "Password match:",
             passwordMatch
         );
-console.log("STEP 5 - AFTER PASSWORD CHECK");
+
         // -------------------------------------------------
         // INVALID PASSWORD
         // -------------------------------------------------
-console.log("STEP 6 - BEFORE INVALID PASSWORD CHECK");
+
         if (!passwordMatch) {
             console.log(
                 "Login failed: incorrect password"
@@ -167,7 +167,7 @@ console.log("STEP 6 - BEFORE INVALID PASSWORD CHECK");
                     "Invalid username or password"
             });
         }
-console.log("STEP 7 - PASSWORD VALID");
+
         // -------------------------------------------------
         // VALIDATE ROLE
         // -------------------------------------------------
@@ -192,7 +192,7 @@ console.log("STEP 7 - PASSWORD VALID");
         // -------------------------------------------------
         // JWT SECRET CHECK
         // -------------------------------------------------
-console.log("STEP 8 - BEFORE JWT");
+
         if (!process.env.JWT_SECRET) {
             console.error(
                 "JWT_SECRET is missing from environment variables"
@@ -204,7 +204,7 @@ console.log("STEP 8 - BEFORE JWT");
                     "Server authentication configuration error"
             });
         }
-console.log("STEP 9 - AFTER JWT");
+
         // -------------------------------------------------
         // CREATE JWT
         // -------------------------------------------------
@@ -224,7 +224,7 @@ console.log("STEP 9 - AFTER JWT");
         // -------------------------------------------------
         // SUCCESS
         // -------------------------------------------------
-console.log("STEP 10 - BEFORE RESPONSE");
+
         console.log(
             "Login successful:",
             user.username,
