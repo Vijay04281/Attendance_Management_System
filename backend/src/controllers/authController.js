@@ -71,17 +71,12 @@ console.log("STEP 2 - BEFORE DB QUERY");
 // TEST DATABASE
 console.log("STEP 2A - POOL TEST START");
 
-const conn = await db.getConnection();
-
-console.log("STEP 2B - POOL CONNECTION ACQUIRED");
-
-conn.release();
-
-console.log("STEP 2C - POOL CONNECTION RELEASED");
-
-const [testRows] = await db.query(
-    "SELECT 1 AS test"
+const [rows] = await db.query(
+    sql,
+    params
 );
+
+return rows;
 
 console.log("STEP 2D - SIMPLE QUERY SUCCESS");
 console.log(testRows);
