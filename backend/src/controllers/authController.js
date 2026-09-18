@@ -1,4 +1,4 @@
-const db = require("../config/db");
+const db = require("../config/db").default;
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
@@ -69,16 +69,25 @@ const login = async (req, res) => {
 console.log("STEP 2 - BEFORE DB QUERY");
 
 // TEST DATABASE
-console.log("STEP 2A - SIMPLE QUERY TEST");
+console.log("STEP 2A - POOL TEST START");
+
+const conn = await db.getConnection();
+
+console.log("STEP 2B - POOL CONNECTION ACQUIRED");
+
+conn.release();
+
+console.log("STEP 2C - POOL CONNECTION RELEASED");
 
 const [testRows] = await db.query(
     "SELECT 1 AS test"
 );
 
-console.log("STEP 2B - SIMPLE QUERY SUCCESS");
+console.log("STEP 2D - SIMPLE QUERY SUCCESS");
+console.log(testRows);
 console.log(testRows);
 
-console.log("STEP 2C - USER QUERY START");
+console.log("STEP 2E - USER QUERY START");
 
 const [users] = await db.query(
     `
