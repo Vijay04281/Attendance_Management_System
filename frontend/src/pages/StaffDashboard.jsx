@@ -1353,6 +1353,10 @@ if (!currentSessionId) {
 
                 const data =
     await response.json();
+   console.log(
+    "ACTIVE SESSION API RESPONSE:",
+    data
+); 
 
 console.log(
     "START ATTENDANCE RESPONSE:",

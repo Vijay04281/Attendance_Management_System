@@ -269,6 +269,24 @@ router.get(
     ),
     getAttendanceSessionById
 );
+router.use(authenticateToken);
+router.get("/db-check", async (req, res) => {
+    try {
+        const [rows] = await pool.query(`
+            SELECT DATABASE() AS db,
+                   @@hostname AS host,
+                   @@port AS port
+        `);
+
+        res.json(rows[0]);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({
+            success: false,
+            message: error.message,
+        });
+    }
+});
 
 
 // =====================================================

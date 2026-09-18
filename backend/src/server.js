@@ -502,7 +502,14 @@ mountRoute(
     classTeacherRoutes,
     "CLASS TEACHER COMPATIBILITY"
 );
+app.get("/db-test", async (req, res) => {
+    const [rows] = await db.query(`
+        SELECT MAX(session_id) AS latest_session
+        FROM attendance_sessions
+    `);
 
+    res.json(rows[0]);
+});
 // =====================================================
 // ROUTE CHECK
 // =====================================================
