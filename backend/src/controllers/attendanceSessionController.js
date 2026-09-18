@@ -810,6 +810,12 @@ const getAttendanceSessionById = async (
             WHERE ats.session_id = ?
         `;
 
+console.log(
+    "SESSION ID:",
+    sessionId
+);
+
+
         const params = [
             sessionId
         ];
@@ -2081,7 +2087,18 @@ const getAttendanceSessionQR = async (
 
         const staffId =
             await resolveStaffId(req);
-
+        const sessionId =
+    Number(req.params.id);
+console.log(
+    "SESSION ID:",
+    sessionId
+);
+if (!sessionId) {
+    return res.status(400).json({
+        success: false,
+        message: "Invalid session id"
+    });
+}
         const forceRefresh =
             String(
                 req.query.force || ""
